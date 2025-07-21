@@ -1,0 +1,9 @@
+{
+    "node_version": "20",
+    "graphs": {
+      "agent": "./src/agent/index.ts:graph"
+    },
+    "ui": {
+      "agent": "./src/agent/listingCard.tsx"
+    }
+  }

@@ -1,23 +1,28 @@
-# FastAPI et serveur
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-python-multipart==0.0.6
-python-dotenv==1.0.0
-
-# LangGraph et LangChain
-langgraph==0.2.39
-langchain==0.3.7
-langchain-openai==0.2.8
-langchain-anthropic==0.2.4
-
-# Base de données (optionnel)
-sqlalchemy==2.0.23
-alembic==1.13.0
-
-# CORS et middleware
-python-cors==1.7.0
-
-# Utilitaires
-pydantic==2.5.0
-httpx==0.25.2
-aiofiles==23.2.1
+apsw==3.50.2.0
+bases==0.3.0
+crawl4ai
+langchain_openai
+bs4==0.0.2
+blinker<1.5
+beautifulsoup4
+langchain
+langchain_core
+langgraph
+osmium
+pydantic
+pymongo
+python-dotenv
+Requests==2.32.4
+requests_ip_rotator==1.0.14
+selenium==4.34.0
+selenium_wire==5.1.0
+urllib3>=2.4.0,<3.0.0
+setuptools==80.9.0
+spatialite==0.0.3
+trio==0.30.0
+trio-websocket==0.12.2
+typing_extensions>=4.14.0,<5.0.0
+undetected-chromedriver==3.5.5
+fastapi
+uvicorn
+fastapi[standard]

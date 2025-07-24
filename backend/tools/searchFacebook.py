@@ -12,7 +12,8 @@ from selenium.webdriver.common.by import By
 from pymongo import MongoClient
 from seleniumwire.utils import decode
 from selenium.webdriver.chrome.options import Options
-#from selenium import webdriver
+
+# from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 import logging
 import sys
@@ -116,8 +117,8 @@ class SearchFacebook(BaseTool, BaseScraper):
         inputs = {
             "lat": lat,
             "lon": lon,
-            "minBudget": minBudget * 10,
-            "maxBudget": maxBudget * 10,
+            "minBudget": minBudget * 100,
+            "maxBudget": maxBudget * 100,
             "minBedrooms": minBedrooms,
             "maxBedrooms": maxBedrooms,
         }
@@ -313,8 +314,9 @@ class SearchFacebook(BaseTool, BaseScraper):
                         price_text = node["node"]["for_sale_item"]["formatted_price"][
                             "text"
                         ]
+                        print(f"Prix brut extrait: '{price_text}'")
                         # Supprimer les espaces, le symbole $ et convertir en nombre
-                        price_numeric = self.clean_price(price_text)
+                        #price_numeric = self.clean_price(price_text)
 
                         # Extraire le nombre de chambres et de salles de bain
                     custom_title = node["node"]["for_sale_item"].get("custom_title", "")
@@ -325,7 +327,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                     filtered_data = {
                         "_id": listing_id,
                         "scraped_at": time.time(),  # Ajoute un timestamp UNIX
-                        "budget": price_numeric,
+                        "budget": price_text,
                         "bedrooms": bedrooms,
                         "bathrooms": bathrooms,
                         "for_sale_item": {
@@ -537,7 +539,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                 # Convertit les variables en JSON et les ajoute au payload
                 self.payload_to_send["variables"] = json.dumps(self.variables)
 
-                #print("headers: ", self.session.headers, "\n")
+                # print("headers: ", self.session.headers, "\n")
 
                 # Fait une requête POST à l'API GraphQL de Facebook
                 resp_body = self.session.post(
@@ -547,7 +549,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                 # print(
                 # "resp_body: ",
                 # dict(list(resp_body.json().items())[:1])
-                # )  
+                # )
 
                 # Vérifie que la réponse contient bien les données d'appartements
                 try:

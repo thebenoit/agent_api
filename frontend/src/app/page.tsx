@@ -54,7 +54,8 @@ export default function Home() {
         },
         body: JSON.stringify({
           message: currentMessage,
-          chatHistory: chatHistory
+          chatHistory: chatHistory,
+          stream: true
         }),
       });
 
@@ -72,6 +73,36 @@ export default function Home() {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+      const reader = response.body?.getReader();
+
+      if(reader){
+        while(true){
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = new TextDecoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for(const line of lines) {
+            if(line.startWith('data')) {
+              const data = JSON.parse(line.slice(6))
+            
+            if (data.type === 'message'){
+              setMessages(prev => 
+                prev.map(msg =>
+                  msg.id === assistantMessage.id
+                  ? {...msg, text: msg.text + data.content}
+                  :msg
+                )
+              )
+            } else if (data.type == 'done'){
+              break;
+            }
+
+            }
+          }
+        }
+      }
     } catch (error) {
       console.error('Error:', error);
       const errorMessage: Message = {
@@ -81,6 +112,10 @@ export default function Home() {
         timestamp: new Date()
       };
       setMessages(prev => [...prev, errorMessage]);
+
+     
+
+
     } finally {
       setIsLoading(false);
     }

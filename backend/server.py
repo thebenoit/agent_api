@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from langchain_core.messages import HumanMessage, AIMessage
 from fastapi.responses import StreamingResponse
+import json
 
 app = FastAPI()
 
@@ -57,27 +58,29 @@ async def chat(request: ChatRequest):
 
     return {"response": response}
 
+
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     async def generate():
         user_message = request.message
         chat_history = request.chat_history or []
-        #encapsule message dans un objet HumanMessage
+        # encapsule message dans un objet HumanMessage
         chat_history.append(HumanMessage(content=user_message))
-        
+
         input_data = {"messages": chat_history}
-        config ={"configurable": {"thread_id":"123"}}
-        
-        #for each event in graph.stream, we get the last message
-        for event in graph.stream(input_data,config):
-           for value in event.values():       
-               if "message" in value:
-                   message = value["message"][-1]
-                   #permet de streamer la réponse
-                   yield f"data: {json.dumps({'type':'message','content':message.content})}"
-        
-        return StreaminResponse(generate(), media_type="text/plain")
-    
+        config = {"configurable": {"thread_id": "123"}}
+
+        # for each event in graph.stream, we get the last message
+        for event in graph.stream(input_data, config):
+            for value in event.values():
+                if "message" in value:
+                    message = value["message"][-1]
+                    # permet de streamer la réponse
+                    yield f"data: {json.dumps({'type':'message','content':message.content})}"
+
+    # ✅ Retour en dehors du générateur
+    return StreamingResponse(generate(), media_type="text/plain")
+
 
 # def main():
 #     print("Starting LangGraph server...")

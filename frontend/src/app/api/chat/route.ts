@@ -3,6 +3,41 @@ import { NextRequest, NextResponse } from 'next/server';
 const FASTAPI_URL = process.env.FASTAPI_URL || 'http://localhost:8000';
 
 export async function POST(request: NextRequest) {
+  const { stream } = await request.json();
+
+  if(stream){
+
+    const encoder = new TextEncoder();
+ 
+    const stream = new ReadableStream({
+      async start(controller) {
+        //basic api call to the fastapi server
+        const response = await fetch(`${FASTAPI_URL}/chat/stream`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(request.body)
+        });
+        //permet de lire les données qui arricent progressivement
+        const reader = response.body?.getReader();
+        if(reader){
+          while(true){
+            const {done,value} = await reader.read();
+            if(done) break;
+            //decode the chunk and enqueue it to the controller
+            const chunk = new TextDecoder().decode(value);
+            controller.enqueue(encoder.encode(chunk));
+          }
+        }
+        controller.close();
+      }
+    });
+
+    return new Response(stream,{
+      headers: {'Content-Type': 'text/plain; charset=utf-8'}
+    })
+
+  }
+
   try {
     const { message, chatHistory = [] } = await request.json();
 

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ApartmentResponse } from "@/components/ui/apartment-response";
-import { getAnonymousSessionID } from "@/utils/sessions";
+import { getAnonymousSessionID } from "@/lib/sessions";
 
 interface Message {
   id: string;

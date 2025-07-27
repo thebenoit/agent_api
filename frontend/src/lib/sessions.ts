@@ -2,6 +2,7 @@ import 'server-only'
 import { SignJWT, jwtVerify } from 'jose'
 //import { SessionPayload } from '@/app/lib/definitions'
 import { cookies } from 'next/headers'
+import { v4 as uuidv4 } from 'uuid'
 
 type SessionPayload = {
     userId: string
@@ -30,6 +31,10 @@ export async function decrypt(session: string | undefined = '') {
     }
   }
 
+export function genereateSessionID() {
+    return crypto.randomUUID()
+}
+
 export async function createSession(userId: string) {
     //expire en un jour
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
@@ -44,5 +49,3 @@ export async function createSession(userId: string) {
       path: '/',
     })
   }
-
-export {  };

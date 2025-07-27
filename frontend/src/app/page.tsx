@@ -3,7 +3,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ApartmentResponse } from "@/components/ui/apartment-response";
-import { getAnonymousSessionID } from "@/lib/sessions";
+import { createSession, decrypt, encrypt, genereateSessionID } from "@/lib/sessions";
+import Link from "next/link";
+
+
 
 interface Message {
   id: string;
@@ -19,12 +22,7 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialiser la session anonyme au chargement du composant
-  useEffect(() => {
-    const anonymousSessionId = getAnonymousSessionID();
-    setSessionId(anonymousSessionId);
-    console.log('Session anonyme créée:', anonymousSessionId);
-  }, []);
+
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -90,11 +88,11 @@ export default function Home() {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = new TextDecoder.decode(value);
+          const chunk = new TextDecoder().decode(value);
           const lines = chunk.split('\n');
 
           for (const line of lines) {
-            if (line.startWith('data')) {
+            if (line.startsWith('data')) {
               const data = JSON.parse(line.slice(6))
 
               if (data.type === 'message') {
@@ -171,12 +169,12 @@ export default function Home() {
             <span className="font-semibold text-black text-xs sm:text-sm md:text-base">Moveout</span>
           </div>
           <div className="flex gap-2 sm:gap-3 md:gap-4">
-            <button className="px-2 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-3 text-xs sm:text-sm md:text-base border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+            <Link href="/login" className="px-2 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-3 text-xs sm:text-sm md:text-base border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
               Se connecter
-            </button>
-            <button className="px-2 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-3 text-xs sm:text-sm md:text-base bg-black text-white rounded-lg hover:bg-gray-800 transition-colors">
+            </Link>
+            <Link href="/signup" className="px-2 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-3 text-xs sm:text-sm md:text-base bg-black text-white rounded-lg hover:bg-gray-800 transition-colors">
               Commencer
-            </button>
+            </Link>
           </div>
         </div>
       </div>

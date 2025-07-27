@@ -15,6 +15,7 @@ app = FastAPI()
 class ChatRequest(BaseModel):
     system_prompt: str
     message: str
+    session_id: str
     chat_history: Optional[List[dict]] = None
 
 
@@ -52,7 +53,7 @@ async def chat(request: ChatRequest):
     input_data = {
         "messages": chat_history,
     }
-    config = {"configurable": {"thread_id": "123"}}
+    config = {"configurable": {"thread_id": request.session_id}}
 
     response = await graph.ainvoke(input_data, config)
 

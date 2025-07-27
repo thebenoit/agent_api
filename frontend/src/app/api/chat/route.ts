@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const FASTAPI_URL = process.env.FASTAPI_URL || 'http://localhost:8000';
 
 export async function POST(request: NextRequest) {
-  const { stream } = await request.json();
+  const { stream, sessionId } = await request.json();
 
   if(stream){
 
@@ -15,7 +15,10 @@ export async function POST(request: NextRequest) {
         const response = await fetch(`${FASTAPI_URL}/chat/stream`, {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify(request.body)
+          body: JSON.stringify({
+            ...request.body,
+            sessionId: sessionId // Transmettre la sessionId au backend
+          })
         });
         //permet de lire les données qui arricent progressivement
         const reader = response.body?.getReader();
@@ -39,7 +42,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { message, chatHistory = [] } = await request.json();
+    const { message, chatHistory = [], sessionId } = await request.json();
 
     if (!message) {
       return NextResponse.json(
@@ -62,7 +65,8 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         system_prompt: "Tu es un assistant IA utile et bienveillant. Réponds de manière claire et concise en français.",
         message: message,
-        chat_history: formattedHistory
+        chat_history: formattedHistory,
+        sessionId: sessionId // Inclure la sessionId dans la requête
       }),
     });
 

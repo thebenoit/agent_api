@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ApartmentResponse } from "@/components/ui/apartment-response";
+import { getAnonymousSessionID } from "@/utils/sessions";
 
 interface Message {
   id: string;
@@ -15,7 +16,15 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Initialiser la session anonyme au chargement du composant
+  useEffect(() => {
+    const anonymousSessionId = getAnonymousSessionID();
+    setSessionId(anonymousSessionId);
+    console.log('Session anonyme créée:', anonymousSessionId);
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -55,6 +64,7 @@ export default function Home() {
         body: JSON.stringify({
           message: currentMessage,
           chatHistory: chatHistory,
+          sessionId: sessionId, // Inclure l'ID de session anonyme
           stream: true
         }),
       });
@@ -75,29 +85,29 @@ export default function Home() {
       setMessages(prev => [...prev, assistantMessage]);
       const reader = response.body?.getReader();
 
-      if(reader){
-        while(true){
+      if (reader) {
+        while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
           const chunk = new TextDecoder.decode(value);
           const lines = chunk.split('\n');
 
-          for(const line of lines) {
-            if(line.startWith('data')) {
+          for (const line of lines) {
+            if (line.startWith('data')) {
               const data = JSON.parse(line.slice(6))
-            
-            if (data.type === 'message'){
-              setMessages(prev => 
-                prev.map(msg =>
-                  msg.id === assistantMessage.id
-                  ? {...msg, text: msg.text + data.content}
-                  :msg
+
+              if (data.type === 'message') {
+                setMessages(prev =>
+                  prev.map(msg =>
+                    msg.id === assistantMessage.id
+                      ? { ...msg, text: msg.text + data.content }
+                      : msg
+                  )
                 )
-              )
-            } else if (data.type == 'done'){
-              break;
-            }
+              } else if (data.type == 'done') {
+                break;
+              }
 
             }
           }
@@ -113,7 +123,7 @@ export default function Home() {
       };
       setMessages(prev => [...prev, errorMessage]);
 
-     
+
 
 
     } finally {

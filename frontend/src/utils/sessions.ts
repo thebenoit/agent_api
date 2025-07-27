@@ -1,4 +1,23 @@
 import { jwtDecode } from "jwt-decode";
+import { v4 as uuidv4 } from 'uuid';
+
+
+const createAnonymousSessionID = (): string => {
+    return uuidv4();
+}
+
+const getAnonymousSessionID = (): string => {
+    let sessionId = sessionStorage.getItem('anonymousSessionId');
+    if (!sessionId) {
+        sessionId = createAnonymousSessionID();
+        sessionStorage.setItem('anonymousSessionId', sessionId);
+    }
+    return sessionId;
+}
+
+const clearAnonymousSession = (): void => {
+    sessionStorage.removeItem('anonymousSessionId');
+}
 
 const logout = () => {
     sessionStorage.removeItem('auth');
@@ -30,4 +49,4 @@ const decodeToken = () => {
 //     return decoded ? decoded.email : null;
 // }
 
-export { logout, setToken, getToken, decodeToken };
+export { logout, setToken, getToken, decodeToken, getAnonymousSessionID, clearAnonymousSession };

@@ -42,19 +42,6 @@ export default function LoginPage() {
 
     return (
         <div className="min-h-screen bg-white flex flex-col">
-            {/* Header */}
-            <div className="border-b bg-white px-4 sm:px-6 md:px-8 lg:px-12 py-3 sm:py-4 md:py-6">
-                <div className="w-full max-w-6xl mx-auto flex items-center justify-between">
-                    <Link href="/" className="flex items-center gap-2 sm:gap-3">
-                        <img
-                            src="/Moveout_Logo2.svg"
-                            alt="MoveoutAI Logo"
-                            className="w-7 h-7 sm:w-8 sm:h-8 md:w-10 md:h-10"
-                        />
-                        <span className="font-semibold text-black text-xs sm:text-sm md:text-base">Moveout</span>
-                    </Link>
-                </div>
-            </div>
 
             {/* Main Content */}
             <div className="flex-1 flex items-center justify-center px-4 sm:px-6">

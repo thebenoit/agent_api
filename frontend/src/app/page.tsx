@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ApartmentResponse } from "@/components/ui/apartment-response";
 import { createSession, decrypt, encrypt, genereateSessionID } from "@/lib/sessions";
-import Link from "next/link";
 
 
 
@@ -157,27 +156,6 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-screen bg-white">
-      {/* Header */}
-      <div className="border-b bg-white px-4 sm:px-6 md:px-8 lg:px-12 py-3 sm:py-4 md:py-6">
-        <div className="w-full max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3">
-            <img
-              src="/Moveout_Logo2.svg"
-              alt="MoveOutAI Logo"
-              className="w-7 h-7 sm:w-8 sm:h-8 md:w-10 md:h-10"
-            />
-            <span className="font-semibold text-black text-xs sm:text-sm md:text-base">Moveout</span>
-          </div>
-          <div className="flex gap-2 sm:gap-3 md:gap-4">
-            <Link href="/login" className="px-2 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-3 text-xs sm:text-sm md:text-base border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-              Se connecter
-            </Link>
-            <Link href="/signup" className="px-2 sm:px-4 md:px-6 py-1.5 sm:py-2 md:py-3 text-xs sm:text-sm md:text-base bg-black text-white rounded-lg hover:bg-gray-800 transition-colors">
-              Commencer
-            </Link>
-          </div>
-        </div>
-      </div>
 
       {/* Messages Container */}
       <div className="flex-1 overflow-y-auto">

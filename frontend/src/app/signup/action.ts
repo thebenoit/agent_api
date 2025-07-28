@@ -35,6 +35,19 @@ export const SignupFormSchema = z.object({
     path: ["confirmPassword"],
   })
 
+export type FormState =
+  | {
+      errors?: {
+        name?: string[]
+        email?: string[]
+        password?: string[]
+        confirmPassword?: string[]
+      }
+      message?: string
+    }
+  | undefined
+
+
 export async function signup(formData: FormData) {
 
 

@@ -1,6 +1,7 @@
 from pymongo import MongoClient
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
+from bson import ObjectId
 import os
 load_dotenv()
 
@@ -13,7 +14,8 @@ class MongoDB:
     async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         
         try:
-            user = self.users.find_one({"_id":user_id})
+            object_id = ObjectId(user_id)
+            user = self.collection.find_one({"_id":object_id})
             return user
         except Exception as e:
             print(f"Error getting user by id: {e}")

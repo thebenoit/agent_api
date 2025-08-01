@@ -16,7 +16,7 @@ class ChatRequest(BaseModel):
     system_prompt: str
     message: str
     session_id: str
-    chat_history: Optional[List[dict]] = None
+    #chat_history: Optional[List[dict]] = None
 
 
 class chatResponse(BaseModel):

@@ -72,6 +72,9 @@ async def test_user_text_chat():
         "session_id": session_id,
     }
 
+    user_id = await decode_session_id(session_id)
+    logger.info(f"User ID décodé: {user_id}")
+
     logger.info("Préparation de la requête HTTP...")
     logger.info(f"URL: http://localhost:8000/chat")
     logger.info(f"Headers: Authorization: Bearer {session_id[:20]}...")

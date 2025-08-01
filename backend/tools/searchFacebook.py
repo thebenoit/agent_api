@@ -6,8 +6,8 @@ import sys
 
 # from setuptools._distutils import version as _version
 # sys.modules['distutils.version'] = _version
-import seleniumwire.undetected_chromedriver as uc
-from seleniumwire.undetected_chromedriver import Chrome
+import undetected_chromedriver as uc
+from undetected_chromedriver import Chrome
 from selenium.webdriver.common.by import By
 from pymongo import MongoClient
 from seleniumwire.utils import decode

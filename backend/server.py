@@ -2,21 +2,28 @@
 import os
 import uvicorn
 from agents.ian import graph
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import Optional, List
 from langchain_core.messages import HumanMessage, AIMessage
 from fastapi.responses import StreamingResponse
+from auth.middleware import auth_middleware
 import json
 
 app = FastAPI()
+
+
+# Ajouter le middleware d'authentification
+@app.middleware("http")
+async def auth_middleware_wrapper(request: Request, call_next):
+    return await auth_middleware(request, call_next)
 
 
 class ChatRequest(BaseModel):
     system_prompt: str
     message: str
     session_id: str
-    #chat_history: Optional[List[dict]] = None
+    # chat_history: Optional[List[dict]] = None
 
 
 class chatResponse(BaseModel):
@@ -37,8 +44,20 @@ def read_root():
     return {"Hello": "World"}
 
 
+@app.get("/user/info")
+async def get_user_info(req: Request):
+    """Récupère les informations de l'utilisateur authentifié"""
+    return {
+        "user_id": req.state.user_id,
+        "thread_id": req.state.thread_id,
+        "user": req.state.user,
+    }
+    
+    
+
+
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, req: Request):
     # get the user message
     user_message = request.message
 
@@ -53,7 +72,8 @@ async def chat(request: ChatRequest):
     input_data = {
         "messages": chat_history,
     }
-    config = {"configurable": {"thread_id": request.session_id}}
+    # Utiliser le thread_id de l'utilisateur authentifié
+    config = {"configurable": {"thread_id": req.state.thread_id}}
 
     response = await graph.ainvoke(input_data, config)
 
@@ -61,7 +81,7 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, req: Request):
     async def generate():
         user_message = request.message
         chat_history = request.chat_history or []
@@ -69,7 +89,8 @@ async def chat_stream(request: ChatRequest):
         chat_history.append(HumanMessage(content=user_message))
 
         input_data = {"messages": chat_history}
-        config = {"configurable": {"thread_id": "123"}}
+        # Utiliser le thread_id de l'utilisateur authentifié
+        config = {"configurable": {"thread_id": req.state.thread_id}}
 
         # for each event in graph.stream, we get the last message
         for event in graph.stream(input_data, config):

@@ -29,9 +29,9 @@ class ChatRequest(BaseModel):
 
 class chatResponse(BaseModel):
     response: str
-    response_type: str
     listings: Optional[List[dict]] = None
     map_data: Optional[dict] = None
+    chat_history: Optional[List[dict]] = None
 
 
 # Route de santé (optionnelle, LangGraph a déjà ses endpoints)
@@ -53,29 +53,22 @@ async def get_user_info(req: Request):
         "thread_id": req.state.thread_id,
         "user": req.state.user,
     }
-    
-
-    
-    
 
 
 @app.post("/chat")
 async def chat(request: ChatRequest, req: Request):
     # get the user message
     user_message = request.message
-    
+
     chat_history = []
-    
-    
+
     user_info = await mongo_db.get_user_by_id(req.state.user_id)
     if user_info is None:
         return {"error": "Utilisateur non trouvé"}, 404
-    
+
     chat_history_db = await mongo_db.get_chat_history(user_info["chatId"])
     if chat_history_db is not None:
         chat_history = chat_history_db.get("messages", [])
-    
-
 
     # get the chat history
     chat_history.append(HumanMessage(content=user_message))
@@ -86,6 +79,8 @@ async def chat(request: ChatRequest, req: Request):
     config = {"configurable": {"thread_id": user_info["chatId"]}}
 
     response = await graph.ainvoke(input_data, config)
+
+    chat_history.append(AIMessage(content=response))
 
     return {"response": response}
 

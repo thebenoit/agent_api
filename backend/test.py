@@ -5,7 +5,7 @@ import os
 import requests
 import time
 import logging
-
+from typing import List
 # Configuration des logs
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -47,6 +47,9 @@ async def decode_session_id(session_id):
     except jwt.InvalidTokenError as e:
         logger.error(f"Token invalide ou modifié {e}")
         return None
+    
+async def update_chat_history(chat_id: str, chat_history: List[dict],who:str):
+    await mongo_db.update_chat_history(chat_id, chat_history,who)
 
 
 async def test_user_text_chat():
@@ -68,7 +71,7 @@ async def test_user_text_chat():
 
     chat_request = {
         "system_prompt": "You are a helpful assistant that can answer questions and help with tasks.",
-        "message": "Hello, how are you?",
+        "message": "je cherche un appartement a Montreal",
         "session_id": session_id,
     }
 
@@ -77,12 +80,12 @@ async def test_user_text_chat():
 
     logger.info("Préparation de la requête HTTP...")
     logger.info(f"URL: http://localhost:8000/chat")
-    logger.info(f"Headers: Authorization: Bearer {session_id[:20]}...")
+    logger.info(f"Headers: Authorization: Bearer {session_id}...")
 
     # Test de connexion au serveur
     logger.info("Test de connexion au serveur...")
     try:
-        test_response = requests.get("http://localhost:8000/", timeout=5)
+        test_response = requests.get("http://localhost:8000/")
         logger.info(f"Connexion serveur OK - Status: {test_response.status_code}")
     except requests.exceptions.ConnectionError:
         logger.error("ERREUR: Impossible de se connecter au serveur sur localhost:8000")
@@ -101,7 +104,7 @@ async def test_user_text_chat():
             "http://localhost:8000/chat",
             json=chat_request,
             headers={"Authorization": f"Bearer {session_id}"},
-            timeout=30,  # Timeout de 30 secondes
+            #timeout=30,  # Timeout de 30 secondes
         )
         request_time = time.time() - request_start
         logger.info(
@@ -128,6 +131,7 @@ async def test_user_text_chat():
 async def main():
     logger.info("Démarrage du programme de test")
     await test_user_text_chat()
+    #await update_chat_history("688bb77bf5435fe5e7f62218", [{"role": "user", "content": "je cherche un appartement a Montreal"}],'user')
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ beautifulsoup4
 langchain
 langchain_core
 langgraph
+langgraph-checkpoint-mongodb
 osmium
 pydantic
 pymongo

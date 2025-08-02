@@ -2,7 +2,8 @@ from typing import Annotated, TypedDict, List, Dict, Optional
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from langchain.chat_models import init_chat_model
-#from langchain_openai import ChatOpenAI
+
+# from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from dotenv import load_dotenv
 from tools.searchFacebook import SearchFacebook
@@ -77,21 +78,18 @@ def search_listing(
     """
     default_radius = 500
     response = google_places.execute(city, location_near)
-    places = response.get('places', [])
+    places = response.get("places", [])
     if not places:
         return []
-        
+
     randomIndex = random.randrange(len(places))
     selected_place = places[randomIndex]
-    lat = selected_place['location']['latitude']
-    lon = selected_place['location']['longitude']
-    name = selected_place['displayName']['text']
-    
-    print(
-        "Selected location:",
-        f"{name} (lat: {lat}, lon: {lon})"
-    )
-    
+    lat = selected_place["location"]["latitude"]
+    lon = selected_place["location"]["longitude"]
+    name = selected_place["displayName"]["text"]
+
+    print("Selected location:", f"{name} (lat: {lat}, lon: {lon})")
+
     return facebook.execute(lat, lon, min_price, max_price, min_bedrooms, max_bedrooms)
 
 
@@ -231,8 +229,8 @@ def stream_graph_updates(user_input: str):
 #         print("User: " + user_input)
 #         stream_graph_updates(user_input)
 #         break
-    
-    
+
+
 if __name__ == "__main__":
     while True:
         try:
@@ -247,5 +245,3 @@ if __name__ == "__main__":
             print("User: " + user_input)
             stream_graph_updates(user_input)
             break
-    
-    

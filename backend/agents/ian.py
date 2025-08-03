@@ -222,7 +222,7 @@ graph_builder.add_edge(START, "chatbot")
 graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 
-checkpointer = AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI"),"checkpointers")
+checkpointer = await AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI"),"checkpointers")
 graph = graph_builder.compile(checkpointer=checkpointer)
 
 

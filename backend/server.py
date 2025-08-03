@@ -67,7 +67,7 @@ async def chat(request: ChatRequest, req: Request):
         return {"error": "Utilisateur non trouvé"}, 404
     
     input_data = {
-        "messages": chat_history,
+         "messages": [{"role": "user", "content": user_message}]
     }
     # Utiliser le thread_id de l'utilisateur authentifié
     config = {"configurable": {"thread_id": user_info["chatId"]}}

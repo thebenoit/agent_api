@@ -21,10 +21,7 @@ async def auth_middleware_wrapper(request: Request, call_next):
 
 
 class ChatRequest(BaseModel):
-    system_prompt: str
     message: str
-    session_id: str
-    # chat_history: Optional[List[dict]] = None
 
 
 class chatResponse(BaseModel):
@@ -60,13 +57,11 @@ async def chat(request: ChatRequest, req: Request):
     # get the user message
     user_message = request.message
 
-    user_info = await mongo_db.get_user_by_id(req.state.user_id)
+    user_info = mongo_db.get_user_by_id(req.state.user_id)
     if user_info is None:
         return {"error": "Utilisateur non trouvé"}, 404
-    
-    input_data = {
-         "messages": [{"role": "user", "content": user_message}]
-    }
+
+    input_data = {"messages": [{"role": "user", "content": user_message}]}
     # Utiliser le thread_id de l'utilisateur authentifié
     config = {"configurable": {"thread_id": user_info["chatId"]}}
 
@@ -75,6 +70,4 @@ async def chat(request: ChatRequest, req: Request):
         config=config,
     )
 
-
     return {"response": response}
-

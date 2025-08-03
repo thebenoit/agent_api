@@ -21,17 +21,19 @@ async def auth_middleware(request: Request, call_next):
         # Decode le token
         decoded = jwt.decode(token, secret_key, algorithms=["HS256"])
         user_id = decoded.get("user_id")
+        print("user_id: Decoded", user_id)
 
         if not user_id:
             raise HTTPException(status_code=401, detail="Token invalide")
 
-        user = await mongo_db.get_user_by_id(user_id)
+        user = mongo_db.get_user_by_id(user_id)
 
         if not user:
             raise HTTPException(status_code=401, detail="Utilisateur non trouve")
 
         # 5. Injecter les données dans request.state
         request.state.user_id = user_id
+        print("type de user:", type(user), "user:", user)
         request.state.thread_id = user.get("threadID")
         request.state.user = user
 
@@ -41,6 +43,7 @@ async def auth_middleware(request: Request, call_next):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token invalide")
     except Exception as e:
+        print(f"Erreur détaillée: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=500, detail=f"Erreur d'authentification: {str(e)}"
         )

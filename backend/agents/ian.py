@@ -1,7 +1,10 @@
 from typing import Annotated, TypedDict, List, Dict, Optional
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
-from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
+
+# Initialisation synchrone du checkpointer
+from langgraph.checkpoint.mongodb import MongoDBSaver, AsyncMongoDBSaver
 
 # from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
@@ -17,7 +20,7 @@ import json
 from langchain_core.messages import ToolMessage
 from tools.googlePlaces import GooglePlaces
 import asyncio
-from langgraph.checkpoint.mongodb.aio import AsyncMongoDBSaver
+
 from database import MongoDB
 
 
@@ -54,209 +57,212 @@ class State(TypedDict):
     price: Dict[str, RangeFilter]
     location: Dict[str, RangeFilter]
     others: Dict[str, RangeFilter]
-    
 
 
+with MongoDBSaver.from_conn_string(os.getenv("MONGO_URI")) as checkpointer:
+    # Initialize services
+    facebook = SearchFacebook()
+    google_places = GooglePlaces()
 
-# Initialize services
-facebook = SearchFacebook()
-google_places = GooglePlaces()
-
-
-@tool
-def search_listing(
-    city: str,
-    min_bedrooms: int,
-    max_bedrooms: int,
-    min_price: int,
-    max_price: int,
-    location_near: Optional[list] = None,
-):
-    """Search listings in listings website according to user preferences.
-
-    Args:
-        city: The city to search in
-        min_bedrooms: Minimum bedrooms wanted
-        max_bedrooms: Maximum bedrooms wanted
-        min_price: Minimum price wanted
-        max_price: Maximum price wanted
-        location_near: Optional nearby locations in a list
-
-    """
-    default_radius = 500
-    response = google_places.execute(city, location_near)
-    places = response.get("places", [])
-    if not places:
-        return []
-
-    randomIndex = random.randrange(len(places))
-    selected_place = places[randomIndex]
-    lat = selected_place["location"]["latitude"]
-    lon = selected_place["location"]["longitude"]
-    name = selected_place["displayName"]["text"]
-
-    print("Selected location:", f"{name} (lat: {lat}, lon: {lon})")
-
-    return facebook.execute(lat, lon, min_price, max_price, min_bedrooms, max_bedrooms)
-
-
-def find_fields_missing(state: State) -> List[str]:
-    """Find missing fields in preferences"""
-    missing = []
-    if not state.get("price"):
-        missing.append("price")
-    if not state.get("bedrooms"):
-        missing.append("bedrooms")
-    if not state.get("location"):
-        missing.append("location")
-    return missing
-
-
-def human_pref_validator(state: State, tool_call_id: str) -> Command:
-    missing_fields = find_fields_missing(state)
-
-    if not missing_fields:
-        result = interrupt(
-            f"Si je comprends bien vous cherchez un appartement avec ces caractéristiques?",
-            price=state.get("price"),
-            bedrooms=state.get("bedrooms"),
-            location=state.get("location"),
-            others=state.get("others"),
-        )
-
-        if result["type"] == "correct":
-            return Command(
-                update={
-                    "validation_complete": True,
-                    "messages": [
-                        ToolMessage(
-                            "Préférences OK, recherche en cours...",
-                            tool_call_id=tool_call_id,
-                        )
-                    ],
-                }
-            )
-        elif result["type"] == "edit":
-            updated_preferences = result.get("preferences", {})
-            return Command(
-                goto="human_pref_validator",
-                update={
-                    "price": updated_preferences.get("price", state["price"]),
-                    "bedrooms": updated_preferences.get("bedrooms", state["bedrooms"]),
-                    "location": updated_preferences.get("location", state["location"]),
-                    "others": updated_preferences.get("others", state["others"]),
-                    "messages": [
-                        ToolMessage(
-                            "Préférences mises à jour", tool_call_id=tool_call_id
-                        )
-                    ],
-                },
-            )
-        else:
-            raise ValueError(f"Type de réponse inconnu: {result['type']}")
-
-    else:
-        result = interrupt(
-            f"Il me manque ces informations pour vous aider :\n"
-            f"{', '.join(missing_fields)}\n"
-            "Veuillez les fournir."
-        )
-
-        verified_bedrooms = result.get("bedrooms", state["bedrooms"])
-        verified_price = result.get("price", state["price"])
-        verified_location = result.get("location", state["location"])
-
-        state_update = {
-            "messages": [
-                ToolMessage(
-                    f"Préférences confirmées: {result}", tool_call_id=tool_call_id
-                )
-            ],
-            "bedrooms": verified_bedrooms,
-            "price": verified_price,
-            "location": verified_location,
-        }
-
-        return Command(goto="human_pref_validator", update=state_update)
-
-
-async def get_messages(state: State):
-    """Get the messages from the state"""
-    thread_id = state.get("thread_id")
-    
-    print("thread_id touvée!: ", thread_id)
-    
-    if not thread_id:
-        return {"messages": []}
-    
-    chat_history = await mongo_db.get_chat_history(thread_id)
-    
-    if chat_history is None:
-        return {"messages": []}   
-    
-    return {"messages": chat_history.get("messages", [])}
-        
-    
-
-def chatbot(state: State):
-    state["messages"].append({"role": "user", "content": state["new_user_input"]})
-    return {}
-
-
-# Initialize graph components
-tool_node = ToolNode([search_listing])
-
-# Utiliser init_chat_model au lieu de ChatOpenAI directement
-moveout = init_chat_model("gpt-4o-mini", model_provider="openai")
-moveout = moveout.bind_tools([search_listing], parallel_tool_calls=False)
-
-graph_builder = StateGraph(State)
-
-# Add nodes
-graph_builder.add_node("chatbot", chatbot)
-graph_builder.add_node("human_verif", human_pref_validator)
-graph_builder.add_node("tools", tool_node)
-
-# Add edges
-graph_builder.add_edge(START, "chatbot")
-graph_builder.add_conditional_edges("chatbot", tools_condition)
-graph_builder.add_edge("tools", "chatbot")
-
-async def init_checkpointer():
-    async with AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI"), "checkpointers") as checkpointer:
-        return checkpointer
-
-checkpointer = init_checkpointer()
-graph = graph_builder.compile(checkpointer=checkpointer)
-
-
-# stream the graph updates(display the messages)
-def stream_graph_updates(user_input: str):
-    for event in graph.stream(
-        {"messages": [{"role": "user", "content": user_input}]},
-        config=config,
+    @tool
+    def search_listing(
+        city: str,
+        min_bedrooms: int,
+        max_bedrooms: int,
+        min_price: int,
+        max_price: int,
+        location_near: Optional[list] = None,
     ):
-        for value in event.values():
-            if "messages" in value:
-                message = value["messages"][-1]
-                if isinstance(message, ToolMessage):
-                    print(f"TOOL RESULT: {message.content}")
-                print("moveout3.0:", message.pretty_print())
+        """Search listings in listings website according to user preferences.
 
+        Args:
+            city: The city to search in
+            min_bedrooms: Minimum bedrooms wanted
+            max_bedrooms: Maximum bedrooms wanted
+            min_price: Minimum price wanted
+            max_price: Maximum price wanted
+            location_near: Optional nearby locations in a list
 
-# while True:
-#     try:
-#         user_input = input("User: ")
-#         if user_input.lower() in ["quit", "exit", "q"]:
-#             print("Goodbye!")
-#             break
-#         stream_graph_updates(user_input)
-#     except:
-#         # fallback if input() is not available
-#         user_input = "What do you know about LangGraph?"
-#         print("User: " + user_input)
-#         stream_graph_updates(user_input)
-#         break
+        """
+        default_radius = 500
+        response = google_places.execute(city, location_near)
+        places = response.get("places", [])
+        if not places:
+            return []
+
+        randomIndex = random.randrange(len(places))
+        selected_place = places[randomIndex]
+        lat = selected_place["location"]["latitude"]
+        lon = selected_place["location"]["longitude"]
+        name = selected_place["displayName"]["text"]
+
+        print("Selected location:", f"{name} (lat: {lat}, lon: {lon})")
+
+        return facebook.execute(
+            lat, lon, min_price, max_price, min_bedrooms, max_bedrooms
+        )
+
+    def find_fields_missing(state: State) -> List[str]:
+        """Find missing fields in preferences"""
+        missing = []
+        if not state.get("price"):
+            missing.append("price")
+        if not state.get("bedrooms"):
+            missing.append("bedrooms")
+        if not state.get("location"):
+            missing.append("location")
+        return missing
+
+    def human_pref_validator(state: State, tool_call_id: str) -> Command:
+        missing_fields = find_fields_missing(state)
+
+        if not missing_fields:
+            result = interrupt(
+                f"Si je comprends bien vous cherchez un appartement avec ces caractéristiques?",
+                price=state.get("price"),
+                bedrooms=state.get("bedrooms"),
+                location=state.get("location"),
+                others=state.get("others"),
+            )
+
+            if result["type"] == "correct":
+                return Command(
+                    update={
+                        "validation_complete": True,
+                        "messages": [
+                            ToolMessage(
+                                "Préférences OK, recherche en cours...",
+                                tool_call_id=tool_call_id,
+                            )
+                        ],
+                    }
+                )
+            elif result["type"] == "edit":
+                updated_preferences = result.get("preferences", {})
+                return Command(
+                    goto="human_pref_validator",
+                    update={
+                        "price": updated_preferences.get("price", state["price"]),
+                        "bedrooms": updated_preferences.get(
+                            "bedrooms", state["bedrooms"]
+                        ),
+                        "location": updated_preferences.get(
+                            "location", state["location"]
+                        ),
+                        "others": updated_preferences.get("others", state["others"]),
+                        "messages": [
+                            ToolMessage(
+                                "Préférences mises à jour", tool_call_id=tool_call_id
+                            )
+                        ],
+                    },
+                )
+            else:
+                raise ValueError(f"Type de réponse inconnu: {result['type']}")
+
+        else:
+            result = interrupt(
+                f"Il me manque ces informations pour vous aider :\n"
+                f"{', '.join(missing_fields)}\n"
+                "Veuillez les fournir."
+            )
+
+            verified_bedrooms = result.get("bedrooms", state["bedrooms"])
+            verified_price = result.get("price", state["price"])
+            verified_location = result.get("location", state["location"])
+
+            state_update = {
+                "messages": [
+                    ToolMessage(
+                        f"Préférences confirmées: {result}", tool_call_id=tool_call_id
+                    )
+                ],
+                "bedrooms": verified_bedrooms,
+                "price": verified_price,
+                "location": verified_location,
+            }
+
+            return Command(goto="human_pref_validator", update=state_update)
+
+    def get_messages(state: State):
+        """Get the messages from the state"""
+        thread_id = state.get("thread_id")
+
+        print("thread_id touvée!: ", thread_id)
+
+        if not thread_id:
+            return {"messages": []}
+
+        chat_history = mongo_db.get_chat_history(thread_id)
+
+        if chat_history is None:
+            return {"messages": []}
+
+        return {"messages": chat_history.get("messages", [])}
+
+    def chatbot(state: State):
+        state["messages"].append({"role": "user", "content": state["new_user_input"]})
+        return {}
+
+    # Initialize graph components
+    tool_node = ToolNode([search_listing])
+
+    # Utiliser init_chat_model au lieu de ChatOpenAI directement
+    moveout = ChatOpenAI(model="gpt-4o-mini")
+    moveout = moveout.bind_tools([search_listing], parallel_tool_calls=False)
+
+    graph_builder = StateGraph(State)
+
+    # Add nodes
+    graph_builder.add_node("chatbot", chatbot)
+    graph_builder.add_node("human_verif", human_pref_validator)
+    graph_builder.add_node("tools", tool_node)
+
+    # Add edges
+    graph_builder.add_edge(START, "chatbot")
+    graph_builder.add_conditional_edges("chatbot", tools_condition)
+    graph_builder.add_edge("tools", "chatbot")
+
+    # async def init_checkpointer():
+    #     async with AsyncMongoDBSaver.from_conn_string(
+    #         os.getenv("MONGO_URI")
+    #     ) as checkpointer:
+    #         return checkpointer
+
+    try:
+        # checkpointer = MongoDBSaver.from_conn_string(os.getenv("MONGO_URI"))
+        print("checkpointer:", checkpointer)
+    except Exception as e:
+        print(f"Error initializing checkpointer: {e}")
+        raise
+    graph = graph_builder.compile(checkpointer=checkpointer)
+
+    # stream the graph updates(display the messages)
+    # def stream_graph_updates(user_input: str):
+    #     for event in graph.stream(
+    #         {"messages": [{"role": "user", "content": user_input}]},
+    #         config=config,
+    #     ):
+    #         for value in event.values():
+    #             if "messages" in value:
+    #                 message = value["messages"][-1]
+    #                 if isinstance(message, ToolMessage):
+    #                     print(f"TOOL RESULT: {message.content}")
+    #                 print("moveout3.0:", message.pretty_print())
+
+    # while True:
+    #     try:
+    #         user_input = input("User: ")
+    #         if user_input.lower() in ["quit", "exit", "q"]:
+    #             print("Goodbye!")
+    #             break
+    #         stream_graph_updates(user_input)
+    #     except:
+    #         # fallback if input() is not available
+    #         user_input = "What do you know about LangGraph?"
+    #         print("User: " + user_input)
+    #         stream_graph_updates(user_input)
+    #         break
 
 
 if __name__ == "__main__":

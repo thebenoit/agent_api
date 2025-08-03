@@ -14,7 +14,7 @@ class MongoDB:
         self.collection = self.db["users"]
         self.memory_collection = self.db["Memory"]
 
-    async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
 
         try:
             object_id = ObjectId(user_id)
@@ -24,7 +24,7 @@ class MongoDB:
             print(f"Error getting user by id: {e}")
             return None
 
-    async def get_chat_history(self, chat_id: str) -> Optional[Dict[str, Any]]:
+    def get_chat_history(self, chat_id: str) -> Optional[Dict[str, Any]]:
         try:
             object_id = ObjectId(chat_id)
             chat_history = self.memory_collection.find_one({"_id": object_id})
@@ -33,12 +33,8 @@ class MongoDB:
         except Exception as e:
             print(f"Error getting chat history: {e}")
             return None
-    
 
-
-    async def update_chat_history(
-        self, chat_id: str, chat_history: List[dict], who: str
-    ):
+    def update_chat_history(self, chat_id: str, chat_history: List[dict], who: str):
         try:
             object_id = ObjectId(chat_id)
             self.memory_collection.update_one(

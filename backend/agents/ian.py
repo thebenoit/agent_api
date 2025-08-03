@@ -43,17 +43,21 @@ print("Initialisation du state...")
 
 class State(TypedDict):
     messages: Annotated[List, add_messages]
+    system_prompt: str
+    what_to_avoid: str
+    what_worked_before: str
+    preferences: str
     bedrooms: Dict[str, RangeFilter]
     price: Dict[str, RangeFilter]
     location: Dict[str, RangeFilter]
     others: Dict[str, RangeFilter]
+    
+async with AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI"),"checkpointers") as checkpointer:
 
 
 # Initialize services
 facebook = SearchFacebook()
 google_places = GooglePlaces()
-
-config = {"configurable": {"thread_id": "1"}}
 
 
 @tool
@@ -173,8 +177,29 @@ def human_pref_validator(state: State, tool_call_id: str) -> Command:
         return Command(goto="human_pref_validator", update=state_update)
 
 
+def get_messages(state: State):
+    """Get the messages from the state"""
+    thread_id = state.get("thread_id")
+    
+    print("thread_id touvée!: ", thread_id)
+    
+    if not thread_id:
+        return {"messages": []}
+    
+    chat_history = await mongo_db.get_chat_history(thread_id)
+    
+    if chat_history is None:
+        return {"messages": []}   
+    
+    return {"messages": chat_history.get("messages", [])}
+    
+    
+    
+
 def chatbot(state: State):
     """Send message list to LLM and return response"""
+    state["messages"] = get_messages(state)
+    
     return {"messages": [moveout.invoke(state["messages"])]}
 
 

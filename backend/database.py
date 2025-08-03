@@ -12,7 +12,7 @@ class MongoDB:
         self.client = MongoClient(os.getenv("MONGO_URI"))
         self.db = self.client[os.getenv("MONGO_DB")]
         self.collection = self.db["users"]
-        self.chat_collection = self.db["chats"]
+        self.memory_collection = self.db["Memory"]
 
     async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
 
@@ -27,8 +27,8 @@ class MongoDB:
     async def get_chat_history(self, chat_id: str) -> Optional[Dict[str, Any]]:
         try:
             object_id = ObjectId(chat_id)
-            chat_history = self.chat_collection.find_one({"_id": object_id})
-            print("chat_history: ", chat_history)
+            chat_history = self.memory_collection.find_one({"_id": object_id})
+            print("messages ", chat_history)
             return chat_history
         except Exception as e:
             print(f"Error getting chat history: {e}")
@@ -41,7 +41,7 @@ class MongoDB:
     ):
         try:
             object_id = ObjectId(chat_id)
-            self.chat_collection.update_one(
+            self.memory_collection.update_one(
                 {"_id": object_id}, {"$set": {"content": chat_history, "type": who}}
             )
         except Exception as e:

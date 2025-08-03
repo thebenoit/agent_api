@@ -66,47 +66,26 @@ async def chat(request: ChatRequest, req: Request):
     if user_info is None:
         return {"error": "Utilisateur non trouvé"}, 404
 
-    chat_history_db = await mongo_db.get_chat_history(user_info["chatId"])
-    if chat_history_db is not None:
-        chat_history = chat_history_db.get("messages", [])
+    # chat_history_db = await mongo_db.get_chat_history(user_info["chatId"])
+    # if chat_history_db is not None:
+    #     chat_history = chat_history_db.get("messages", [])
 
-    # get the chat history
-    chat_history.append(HumanMessage(content=user_message))
-    input_data = {
-        "messages": chat_history,
-    }
+    # # get the chat history
+    # chat_history.append(HumanMessage(content=user_message))
+    # input_data = {
+    #     "messages": chat_history,
+    # }
     # Utiliser le thread_id de l'utilisateur authentifié
     config = {"configurable": {"thread_id": user_info["chatId"]}}
 
-    response = await graph.ainvoke(input_data, config)
+    response = await graph.ainvoke(
+        input=user_message,
+        config=config,
+    )
 
-    chat_history.append(AIMessage(content=response))
+    # chat_history.append(AIMessage(content=response))
 
     return {"response": response}
-
-
-@app.post("/chat/stream")
-async def chat_stream(request: ChatRequest, req: Request):
-    async def generate():
-        user_message = request.message
-        chat_history = request.chat_history or []
-        # encapsule message dans un objet HumanMessage
-        chat_history.append(HumanMessage(content=user_message))
-
-        input_data = {"messages": chat_history}
-        # Utiliser le thread_id de l'utilisateur authentifié
-        config = {"configurable": {"thread_id": req.state.thread_id}}
-
-        # for each event in graph.stream, we get the last message
-        for event in graph.stream(input_data, config):
-            for value in event.values():
-                if "message" in value:
-                    message = value["message"][-1]
-                    # permet de streamer la réponse
-                    yield f"data: {json.dumps({'type':'message','content':message.content})}"
-
-    # ✅ Retour en dehors du générateur
-    return StreamingResponse(generate(), media_type="text/plain")
 
 
 # def main():

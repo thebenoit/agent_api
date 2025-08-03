@@ -16,6 +16,9 @@ import random
 import json
 from langchain_core.messages import ToolMessage
 from tools.googlePlaces import GooglePlaces
+import asyncio
+from langgraph.checkpoint.mongodb.aio import AsyncMongoDBSaver
+from database import MongoDB
 
 
 # from IPython.display import Image, display  # Commenté car problématique
@@ -177,7 +180,7 @@ def human_pref_validator(state: State, tool_call_id: str) -> Command:
         return Command(goto="human_pref_validator", update=state_update)
 
 
-def get_messages(state: State):
+async def get_messages(state: State):
     """Get the messages from the state"""
     thread_id = state.get("thread_id")
     
@@ -192,15 +195,12 @@ def get_messages(state: State):
         return {"messages": []}   
     
     return {"messages": chat_history.get("messages", [])}
-    
-    
+        
     
 
 def chatbot(state: State):
-    """Send message list to LLM and return response"""
-    state["messages"] = get_messages(state)
-    
-    return {"messages": [moveout.invoke(state["messages"])]}
+    state["messages"].append({"role": "user", "content": state["new_user_input"]})
+    return {}
 
 
 # Initialize graph components
@@ -222,7 +222,11 @@ graph_builder.add_edge(START, "chatbot")
 graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 
-checkpointer = await AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI"),"checkpointers")
+async def init_checkpointer():
+    async with AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI"), "checkpointers") as checkpointer:
+        return checkpointer
+
+checkpointer = init_checkpointer()
 graph = graph_builder.compile(checkpointer=checkpointer)
 
 

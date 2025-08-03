@@ -28,7 +28,7 @@ async def create_session_id(user_id):
             {"user_id": user_id}, os.getenv("SECRET_KEY"), algorithm="HS256"
         )
         total_time = time.time() - start_time
-        logger.info(f"Session ID créé en {total_time:.2f}s")
+        logger.info(f"Session ID créé en {total_time:.2f}s {session_id}")
         return session_id
     else:
         logger.warning("Utilisateur non trouvé")
@@ -130,7 +130,7 @@ async def test_user_text_chat():
 
 async def main():
     logger.info("Démarrage du programme de test")
-    await test_user_text_chat()
+    await create_session_id("66bd41ade6e37be2ef4b4fc2")
     #await update_chat_history("688bb77bf5435fe5e7f62218", [{"role": "user", "content": "je cherche un appartement a Montreal"}],'user')
 
 

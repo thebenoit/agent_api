@@ -34,7 +34,7 @@ class MongoDB:
             print(f"Error getting chat history: {e}")
             return None
     
-    async def add_message_to_history
+
 
     async def update_chat_history(
         self, chat_id: str, chat_history: List[dict], who: str

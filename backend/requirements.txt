@@ -27,3 +27,4 @@ undetected-chromedriver==3.5.5
 fastapi
 uvicorn
 fastapi[standard]
+PyJWT

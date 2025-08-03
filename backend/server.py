@@ -60,8 +60,6 @@ async def chat(request: ChatRequest, req: Request):
     # get the user message
     user_message = request.message
 
-    chat_history = []
-
     user_info = await mongo_db.get_user_by_id(req.state.user_id)
     if user_info is None:
         return {"error": "Utilisateur non trouvé"}, 404
@@ -77,20 +75,6 @@ async def chat(request: ChatRequest, req: Request):
         config=config,
     )
 
-    # chat_history.append(AIMessage(content=response))
 
     return {"response": response}
 
-
-# def main():
-#     print("Starting LangGraph server...")
-#     port = int(os.getenv("PORT", "2024"))
-#     uvicorn.run(
-#         app,
-#         host="0.0.0.0",
-#         port=port,
-#         reload=True,
-#     )
-
-# if __name__ == "__main__":
-#     main()

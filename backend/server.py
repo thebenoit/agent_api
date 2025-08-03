@@ -65,21 +65,15 @@ async def chat(request: ChatRequest, req: Request):
     user_info = await mongo_db.get_user_by_id(req.state.user_id)
     if user_info is None:
         return {"error": "Utilisateur non trouvé"}, 404
-
-    # chat_history_db = await mongo_db.get_chat_history(user_info["chatId"])
-    # if chat_history_db is not None:
-    #     chat_history = chat_history_db.get("messages", [])
-
-    # # get the chat history
-    # chat_history.append(HumanMessage(content=user_message))
-    # input_data = {
-    #     "messages": chat_history,
-    # }
+    
+    input_data = {
+        "messages": chat_history,
+    }
     # Utiliser le thread_id de l'utilisateur authentifié
     config = {"configurable": {"thread_id": user_info["chatId"]}}
 
     response = await graph.ainvoke(
-        input=user_message,
+        input=input_data,
         config=config,
     )
 

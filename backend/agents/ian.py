@@ -52,7 +52,7 @@ class State(TypedDict):
     location: Dict[str, RangeFilter]
     others: Dict[str, RangeFilter]
     
-async with AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI"),"checkpointers") as checkpointer:
+
 
 
 # Initialize services
@@ -222,9 +222,8 @@ graph_builder.add_edge(START, "chatbot")
 graph_builder.add_conditional_edges("chatbot", tools_condition)
 graph_builder.add_edge("tools", "chatbot")
 
-# Compile graph
-memory = MemorySaver()
-graph = graph_builder.compile(checkpointer=memory)
+checkpointer = AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI"),"checkpointers")
+graph = graph_builder.compile(checkpointer=checkpointer)
 
 
 # stream the graph updates(display the messages)

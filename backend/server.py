@@ -52,22 +52,42 @@ async def get_user_info(req: Request):
     }
 
 
+# ... existing code ...
+
 @app.post("/chat")
 async def chat(request: ChatRequest, req: Request):
-    # get the user message
-    user_message = request.message
+    try:
+        # get the user message
+        user_message = request.message
 
-    user_info = mongo_db.get_user_by_id(req.state.user_id)
-    if user_info is None:
-        return {"error": "Utilisateur non trouvé"}, 404
+        user_info = mongo_db.get_user_by_id(req.state.user_id)
+        if user_info is None:
+            return {"error": "Utilisateur non trouvé"}, 404
 
-    input_data = {"messages": [{"role": "user", "content": user_message}]}
-    # Utiliser le thread_id de l'utilisateur authentifié
-    config = {"configurable": {"thread_id": user_info["chatId"]}}
+        #print("user_info:", user_info)
 
-    response = await graph.ainvoke(
-        input=input_data,
-        config=config,
-    )
+        input_data = {"messages": [{"role": "user", "content": user_message}]}
 
-    return {"response": response}
+        # Utiliser le thread_id de l'utilisateur authentifié
+        config = {"configurable": {"thread_id": user_info["chatId"]}}
+
+        # response = await graph.ainvoke(
+        #     input=input_data,
+        #     config=config,
+        # )
+        
+        response = await graph.invoke(input=input_data, config=config)
+
+        
+        ##Ajouter Human Message dans la base de données
+        
+        ##Ajouter AI Message dans la base de données
+        
+
+        return {"response": response}
+    except NotImplementedError as e:
+        print(f"Erreur NotImplementedError: {e}")
+        return {"error": "Fonctionnalité non implémentée", "details": str(e)}, 501
+    except Exception as e:
+        print(f"Erreur générale: {e}")
+        return {"error": "Erreur interne du serveur", "details": str(e)}, 500

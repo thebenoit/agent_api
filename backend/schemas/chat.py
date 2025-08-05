@@ -63,6 +63,7 @@ class ChatRequest(BaseModel):
         description="List of messages in the conversation",
         min_length=1,
     )
+    
 
 
 class ChatResponse(BaseModel):
@@ -73,6 +74,8 @@ class ChatResponse(BaseModel):
     """
 
     messages: List[Message] = Field(..., description="List of messages in the conversation")
+    listings: List[dict] = Field(..., description="List of listings")
+    map_data: dict = Field(..., description="Map data")
 
 
 class StreamResponse(BaseModel):

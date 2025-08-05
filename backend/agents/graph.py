@@ -40,7 +40,8 @@ from schemas import (
     Message,
     RangeFilter,
 )
-from utils import dump_messages
+from utils import dump_messages, prepare_messages
+from database_manager import mongo_manager
 
 # Configuration du logging
 logger = logging.getLogger(__name__)
@@ -139,8 +140,10 @@ class IanGraph:
             api_key=os.getenv("OPENAI_API_KEY"),
             max_tokens=1000,
         ).bind_tools([search_listing])
-        self._client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
+        # Utiliser le manager au lieu d'une connexion directe
+        self._client = mongo_manager.get_async_client()
         self._graph: Optional[CompiledStateGraph] = None
+        self._checkpointer: Optional[AsyncMongoDBSaver] = None
 
     def __process_message(self, messages: list[BaseMessage]) -> list[Message]:
         openai_style_messages = convert_to_openai_messages(messages)
@@ -166,9 +169,6 @@ class IanGraph:
         Returns:
             list[dict]: The response from the LLM.
         """
-        if self._graph is None:
-            self._graph = await self.create_graph()
-
         config = {
             "configurable": {"thread_id": session_id},
             "metadata": {
@@ -176,13 +176,76 @@ class IanGraph:
             },
         }
         try:
-            response = await self._graph.ainvoke(
-                {"messages": dump_messages(messages), "session_id": session_id}, config
-            )
-            return self.__process_message(response["messages"])
+            # ✅ Créer le checkpointer et compiler le graph pour cette invocation
+            async with AsyncMongoDBSaver.from_conn_string(
+                os.getenv("MONGO_URI"),
+                db_name=os.getenv("MONGO_DB"),
+                collection_name="checkpointers",
+            ) as checkpointer:
+                # Créer le graph builder si pas encore fait
+                if not hasattr(self, "_graph_builder"):
+                    self._graph_builder = await self._create_graph_builder()
+
+                # Compiler le graph avec le checkpointer pour cette invocation
+                graph_with_checkpointer = self._graph_builder.compile(
+                    checkpointer=checkpointer
+                )
+
+                # Convertir session_id en string si c'est un ObjectId
+                session_id_str = (
+                    str(session_id) if hasattr(session_id, "__str__") else session_id
+                )
+
+                response = await graph_with_checkpointer.ainvoke(
+                    {"messages": dump_messages(messages), "session_id": session_id_str},
+                    config=config,
+                )
+                return self.__process_message(response["messages"])
         except Exception as e:
             logger.error(f"error_getting_response: {e}")
             raise e
+
+    async def _create_graph_builder(self):
+        """Create the graph builder (without compilation)."""
+        try:
+            tool_node = ToolNode([search_listing])
+            logger.info("ToolNode initialisé avec succès")
+        except Exception as e:
+            logger.error(f"Erreur initialisation ToolNode: {e}")
+            logger.error(f"Traceback:", exc_info=True)
+            raise
+
+        try:
+            graph_builder = StateGraph(GraphState)
+            logger.info("StateGraph initialisé avec succès")
+        except Exception as e:
+            logger.error(f"Erreur initialisation StateGraph: {e}")
+            logger.error(f"Traceback:", exc_info=True)
+            raise
+
+        logger.info("Ajout des nodes au graph...")
+        try:
+            graph_builder.add_node("chatbot", self._chat)
+            # graph_builder.add_node("human_verif", human_pref_validator)
+            graph_builder.add_node("tools", tool_node)
+            logger.info("Nodes ajoutés avec succès")
+        except Exception as e:
+            logger.error(f"Erreur ajout des nodes: {e}")
+            logger.error(f"Traceback:", exc_info=True)
+            raise
+
+        logger.info("Ajout des edges au graph...")
+        try:
+            graph_builder.add_edge(START, "chatbot")
+            graph_builder.add_conditional_edges("chatbot", tools_condition)
+            graph_builder.add_edge("tools", "chatbot")
+            logger.info("Edges ajoutés avec succès")
+        except Exception as e:
+            logger.error(f"Erreur ajout des edges: {e}")
+            logger.error(f"Traceback:", exc_info=True)
+            raise
+
+        return graph_builder
 
     async def _chat(self, state: GraphState) -> dict:
 
@@ -190,13 +253,19 @@ class IanGraph:
         logger.info(f"State reçu: {state}")
 
         try:
-            new_user_input = state.get("new_user_input")
-            logger.info(f"Input utilisateur: {new_user_input}")
 
-            state["messages"].append({"role": "user", "content": new_user_input})
+            messages = prepare_messages(
+                state.messages,
+                self.llm,
+                "You are a helpful assistant that can search for listings and provide information about them.",
+            )
+
             logger.info("Message ajouté au state")
             logger.info("=== FIN CHATBOT ===")
-            return {}
+            generated_state = {
+                "messages": [await self.llm.ainvoke(dump_messages(messages))]
+            }
+            return generated_state
 
         except Exception as e:
             logger.error(f"Erreur dans chatbot: {e}")
@@ -210,49 +279,12 @@ class IanGraph:
             Optional[CompiledStateGraph]: The configured LangGraph instance or None if init fails
         """
         if self._graph is None:
-            try:
-                tool_node = ToolNode([search_listing])
-                logger.info("ToolNode initialisé avec succès")
-            except Exception as e:
-                logger.error(f"Erreur initialisation ToolNode: {e}")
-                logger.error(f"Traceback:", exc_info=True)
-                raise
-
-            try:
-                graph_builder = StateGraph(GraphState)
-                logger.info("StateGraph initialisé avec succès")
-            except Exception as e:
-                logger.error(f"Erreur initialisation StateGraph: {e}")
-                logger.error(f"Traceback:", exc_info=True)
-                raise
-
-            logger.info("Ajout des nodes au graph...")
-            try:
-                graph_builder.add_node("chatbot", self._chat)
-                # graph_builder.add_node("human_verif", human_pref_validator)
-                graph_builder.add_node("tools", tool_node)
-                logger.info("Nodes ajoutés avec succès")
-            except Exception as e:
-                logger.error(f"Erreur ajout des nodes: {e}")
-                logger.error(f"Traceback:", exc_info=True)
-                raise
-
-            logger.info("Ajout des edges au graph...")
-            try:
-                graph_builder.add_edge(START, "chatbot")
-                graph_builder.add_conditional_edges("chatbot", tools_condition)
-                graph_builder.add_edge("tools", "chatbot")
-                logger.info("Edges ajoutés avec succès")
-            except Exception as e:
-                logger.error(f"Erreur ajout des edges: {e}")
-                logger.error(f"Traceback:", exc_info=True)
-                raise
-
-        if self._graph is None:
-            # ✅ Utilise MongoDB, pas PostgreSQL
-            async with AsyncMongoDBSaver.from_conn_string(
-                os.getenv("MONGO_URI")
-            ) as checkpointer:
-                # ... votre logique de graph
-                self._graph = graph_builder.compile(checkpointer=checkpointer)
+            # ✅ Utilise une connexion séparée pour le checkpointer
+            # pour éviter de fermer la connexion principale
+            checkpointer = AsyncMongoDBSaver.from_conn_string(
+                os.getenv("MONGO_URI"),
+                db_name=os.getenv("MONGO_DB"),
+                collection_name="checkpointers",
+            )
+            self._graph = self._graph_builder.compile(checkpointer=checkpointer)
         return self._graph

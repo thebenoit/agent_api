@@ -2,7 +2,8 @@
 
 import re
 import uuid
-from typing import Annotated, Dict, List
+from typing import Annotated, Dict, List, Union
+from bson import ObjectId
 
 from langgraph.graph.message import add_messages
 from pydantic import (
@@ -53,18 +54,22 @@ class GraphState(BaseModel):
 
     @field_validator("session_id")
     @classmethod
-    def validate_session_id(cls, v: str) -> str:
+    def validate_session_id(cls, v: Union[str, ObjectId]) -> str:
         """Validate that the session ID is a valid UUID or follows safe pattern.
 
         Args:
-            v: The thread ID to validate
+            v: The session ID to validate (can be string or ObjectId)
 
         Returns:
-            str: The validated session ID
+            str: The validated session ID as string
 
         Raises:
             ValueError: If the session ID is not valid
         """
+        # Convertir ObjectId en string si nécessaire
+        if isinstance(v, ObjectId):
+            v = str(v)
+
         # Try to validate as UUID
         try:
             uuid.UUID(v)

@@ -1,7 +1,8 @@
 # server.py
 import os
 import uvicorn
-#from agents.ian import graph
+
+# from agents.ian import graph
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import Optional, List
@@ -11,6 +12,9 @@ from auth.middleware import auth_middleware
 from database import mongo_db
 import json
 from agents.graph import IanGraph
+from schemas import ChatRequest
+from database_manager import mongo_manager
+import atexit
 
 agent = IanGraph()
 
@@ -23,8 +27,8 @@ async def auth_middleware_wrapper(request: Request, call_next):
     return await auth_middleware(request, call_next)
 
 
-class ChatRequest(BaseModel):
-    message: str
+# class ChatRequest(BaseModel):
+#     message: str
 
 
 class chatResponse(BaseModel):
@@ -57,47 +61,52 @@ async def get_user_info(req: Request):
 
 # ... existing code ...
 
+
 @app.post("/chat")
 async def chat(request: ChatRequest, req: Request):
     try:
         # get the user message
-        user_message = request.message
+        # user_message = request.messages
 
         user_info = mongo_db.get_user_by_id(req.state.user_id)
         if user_info is None:
             return {"error": "Utilisateur non trouvé"}, 404
 
-        #print("user_info:", user_info)
+        # print("user_info:", user_info)
 
-        input_data = {"messages": [{"role": "user", "content": user_message}]}
+        # input_data = {"messages": [{"role": "user", "content": user_message}]}
 
         # Utiliser le thread_id de l'utilisateur authentifié
         config = {"configurable": {"thread_id": user_info["chatId"]}}
-        
+
         agent_response = await agent._get_response(
-            messages=input_data["messages"],
+            messages=request.messages,
             session_id=user_info["chatId"],
             user_id=user_info["_id"],
         )
-        
 
         # response = await graph.ainvoke(
         #     input=input_data,
         #     config=config,
         # )
-        
-        #response = await graph.ainvoke(input=input_data, config=config)
 
-        
+        # response = await graph.ainvoke(input=input_data, config=config)
+
         ##Ajouter Human Message dans la base de données
-        
-        ##Ajouter AI Message dans la base de données
-        
 
-        return {"response": response}
+        ##Ajouter AI Message dans la base de données
+
+        return {"response": agent_response}
     except NotImplementedError as e:
         print(f"Erreur NotImplementedError: {e}")
         return {"error": "Fonctionnalité non implémentée", "details": str(e)}, 501
     except Exception as e:
         print(f"Erreur générale: {e}")
         return {"error": "Erreur interne du serveur", "details": str(e)}, 500
+
+
+# Gestionnaire de fermeture propre
+@atexit.register
+def cleanup():
+    """Ferme proprement les connexions MongoDB à la fermeture de l'application."""
+    mongo_manager.close_all()

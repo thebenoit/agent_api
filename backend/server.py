@@ -1,7 +1,7 @@
 # server.py
 import os
 import uvicorn
-from agents.ian import graph
+#from agents.ian import graph
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import Optional, List
@@ -10,6 +10,9 @@ from fastapi.responses import StreamingResponse
 from auth.middleware import auth_middleware
 from database import mongo_db
 import json
+from agents.graph import IanGraph
+
+agent = IanGraph()
 
 app = FastAPI()
 
@@ -70,13 +73,20 @@ async def chat(request: ChatRequest, req: Request):
 
         # Utiliser le thread_id de l'utilisateur authentifié
         config = {"configurable": {"thread_id": user_info["chatId"]}}
+        
+        agent_response = await agent._get_response(
+            messages=input_data["messages"],
+            session_id=user_info["chatId"],
+            user_id=user_info["_id"],
+        )
+        
 
         # response = await graph.ainvoke(
         #     input=input_data,
         #     config=config,
         # )
         
-        response = await graph.ainvoke(input=input_data, config=config)
+        #response = await graph.ainvoke(input=input_data, config=config)
 
         
         ##Ajouter Human Message dans la base de données

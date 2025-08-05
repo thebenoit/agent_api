@@ -28,3 +28,4 @@ fastapi
 uvicorn
 fastapi[standard]
 PyJWT
+langfuse==3.0.

@@ -1,4 +1,4 @@
-from tools.base_tool import BaseTool
+from agents.tools.base_tool import BaseTool
 from dotenv import load_dotenv
 import requests
 import os

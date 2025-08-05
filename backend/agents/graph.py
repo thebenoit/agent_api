@@ -7,6 +7,7 @@ from typing import (
     Literal,
     Optional,
 )
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from asgiref.sync import sync_to_async
 from langchain_core.messages import (
@@ -24,9 +25,105 @@ from langgraph.graph import (
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
 from openai import OpenAIError
-from psycopg_pool import AsyncConnectionPool
+
 import os
-from agents.tools import search_listing
+import random
+import logging
+from langchain_core.tools import tool
+from agents.tools.searchFacebook import SearchFacebook
+from agents.tools.googlePlaces import GooglePlaces
+from schemas import (
+    GraphState,
+    Message,
+)
+
+# Configuration du logging
+logger = logging.getLogger(__name__)
+
+#from agents.tools import search_listing
+
+# Initialisation des outils
+google_places = None
+facebook = None
+
+try:
+    google_places = GooglePlaces()
+    logger.info("GooglePlaces initialisé avec succès")
+except Exception as e:
+    logger.error(f"Erreur initialisation GooglePlaces: {e}")
+    google_places = None
+
+try:
+    facebook = SearchFacebook()
+    logger.info("SearchFacebook initialisé avec succès")
+except Exception as e:
+    logger.error(f"Erreur initialisation SearchFacebook: {e}")
+    facebook = None
+
+@tool
+def search_listing(
+    city: str,
+    min_bedrooms: int,
+    max_bedrooms: int,
+    min_price: int,
+    max_price: int,
+    location_near: Optional[list] = None,
+):
+    """Search listings in listings website according to user preferences.
+
+    Args:
+        city: The city to search in
+        min_bedrooms: Minimum bedrooms wanted
+        max_bedrooms: Maximum bedrooms wanted
+        min_price: Minimum price wanted
+        max_price: Maximum price wanted
+        location_near: Optional nearby locations in a list
+
+    """
+    logger.info(f"=== DÉBUT SEARCH_LISTING ===")
+    logger.info(
+        f"Paramètres reçus: city={city}, min_bedrooms={min_bedrooms}, max_bedrooms={max_bedrooms}, min_price={min_price}, max_price={max_price}, location_near={location_near}"
+    )
+
+    try:
+        default_radius = 500
+        logger.info("Appel de GooglePlaces.execute...")
+        response = google_places.execute(city, location_near)
+        logger.info(f"Réponse GooglePlaces: {response}")
+
+        places = response.get("places", [])
+        logger.info(f"Nombre de places trouvées: {len(places)}")
+
+        if not places:
+            logger.warning("Aucune place trouvée")
+            return []
+
+        randomIndex = random.randrange(len(places))
+        selected_place = places[randomIndex]
+        logger.info(f"Place sélectionnée (index {randomIndex}): {selected_place}")
+
+        lat = selected_place["location"]["latitude"]
+        lon = selected_place["location"]["longitude"]
+        name = selected_place["displayName"]["text"]
+
+        logger.info(f"Coordonnées extraites: lat={lat}, lon={lon}, name={name}")
+
+        print("Selected location:", f"{name} (lat: {lat}, lon: {lon})")
+
+        logger.info("Appel de Facebook.execute...")
+        result = facebook.execute(
+            lat, lon, min_price, max_price, min_bedrooms, max_bedrooms
+        )
+        logger.info(
+            f"Résultat Facebook: {len(result) if isinstance(result, list) else 'Non-liste'} éléments"
+        )
+        logger.info("=== FIN SEARCH_LISTING ===")
+        return result
+
+    except Exception as e:
+        logger.error(f"Erreur dans search_listing: {e}")
+        logger.error(f"Traceback:", exc_info=True)
+        raise
 
 
 class IanGraph:
@@ -36,38 +133,10 @@ class IanGraph:
             api_key=os.getenv("OPENAI_API_KEY"),
             max_tokens=1000,
         ).bind_tools([search_listing])
-        self.connection_pool: Optional[AsyncConnectionPool] = None
+        self._client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
         self._graph: Optional[CompiledStateGraph] = None
     
-    
-    async def _connection_pool(self):
-        """Get a PostgreSQL connection pool using environment-specific settings.
 
-        Returns:
-            AsyncConnectionPool: A connection pool for PostgreSQL database.
-        """
-        
-        if self._connection_pool is None:
-            try:
-                max_size = 20
-                
-                self.connection_pool = AsyncConnectionPool(
-                    os.getenv("MONGO_URI"),
-                    open=false,
-                    max_size=max_size,
-                    kwargs={
-                        "autocommit": True,
-                        "connect_timeout": 5,
-                        "prepare_threshold": None,                        
-                    }
-                )
-                await self._connection_pool.open()
-                logger.info("connection_pool_created", max_size=max_size)  
-            except Exception as e:
-                logger.error("connection_pool_creation_failed", error=str(e))
-                raise e
-        return self.connection_pool
-    
     def __process_message(self, messages: list[BaseMessage]) -> list[Message]:
         openai_style_messages = convert_to_openai_messages(messages)
         return [
@@ -170,15 +239,11 @@ class IanGraph:
                 logger.error(f"Traceback:", exc_info=True)
                 raise
                 
-            connection_pool = await self._connection_pool()
-            if connection_pool:
-                checkpointer = AsyncMongoDBSaver(connection_pool)
-                await checkpointer.setup()
-            else:
-                raise Exception("Connection pool init failed")
-            
-            self._graph = graph_builder.compile(checkpointer=checkpointer)
-            
+        if self._graph is None:
+            # ✅ Utilise MongoDB, pas PostgreSQL
+            async with AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI")) as checkpointer:
+                # ... votre logique de graph
+                self._graph = graph_builder.compile(checkpointer=checkpointer)
         return self._graph
                 
                 

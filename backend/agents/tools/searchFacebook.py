@@ -34,8 +34,8 @@ from time import sleep
 
 load_dotenv()
 
-from tools.base_tool import BaseTool
-from tools.bases.base_scraper import BaseScraper
+from agents.tools.base_tool import BaseTool
+from agents.tools.bases.base_scraper import BaseScraper
 
 
 class SearchFacebook(BaseTool, BaseScraper):

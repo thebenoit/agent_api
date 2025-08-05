@@ -9,9 +9,11 @@ langchain
 langchain_core
 langgraph
 langgraph-checkpoint-mongodb
+langchain-community>=0.3.20
 osmium
 pydantic
 pymongo
+motor
 python-dotenv
 Requests==2.32.4
 requests_ip_rotator==1.0.14
@@ -29,3 +31,4 @@ uvicorn
 fastapi[standard]
 PyJWT
 langfuse==3.0.
+python-multipart>=0.0.20

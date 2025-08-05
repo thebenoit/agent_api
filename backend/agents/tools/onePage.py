@@ -1,5 +1,5 @@
-from tools.base_tool import BaseTool
-from tools.bases.base_scraper import BaseScraper
+from agents.tools.base_tool import BaseTool
+from agents.tools.bases.base_scraper import BaseScraper
 import os
 import re
 from crawl4ai import (

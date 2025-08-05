@@ -76,7 +76,7 @@ async def chat(request: ChatRequest, req: Request):
         #     config=config,
         # )
         
-        response = await graph.invoke(input=input_data, config=config)
+        response = await graph.ainvoke(input=input_data, config=config)
 
         
         ##Ajouter Human Message dans la base de données

@@ -6,24 +6,27 @@ from typing import (
     Dict,
     Literal,
     Optional,
+    List,
 )
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from asgiref.sync import sync_to_async
+
 from langchain_core.messages import (
     BaseMessage,
     ToolMessage,
     convert_to_openai_messages,
 )
 from langchain_openai import ChatOpenAI
-from langfuse.langchain import CallbackHandler
+
 from langgraph.checkpoint.mongodb.aio import AsyncMongoDBSaver
+from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph import (
     END,
+    START,
     StateGraph,
 )
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import StateSnapshot
+from langgraph.types import StateSnapshot, Command, interrupt
 from openai import OpenAIError
 
 import os
@@ -35,12 +38,14 @@ from agents.tools.googlePlaces import GooglePlaces
 from schemas import (
     GraphState,
     Message,
+    RangeFilter,
 )
+from utils import dump_messages
 
 # Configuration du logging
 logger = logging.getLogger(__name__)
 
-#from agents.tools import search_listing
+# from agents.tools import search_listing
 
 # Initialisation des outils
 google_places = None
@@ -59,6 +64,7 @@ try:
 except Exception as e:
     logger.error(f"Erreur initialisation SearchFacebook: {e}")
     facebook = None
+
 
 @tool
 def search_listing(
@@ -135,18 +141,18 @@ class IanGraph:
         ).bind_tools([search_listing])
         self._client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
         self._graph: Optional[CompiledStateGraph] = None
-    
 
     def __process_message(self, messages: list[BaseMessage]) -> list[Message]:
         openai_style_messages = convert_to_openai_messages(messages)
         return [
             Message(**message)
             for message in openai_style_messages
-            if message["role"] in ["assistant","user"] and message["content"]
+            if message["role"] in ["assistant", "user"] and message["content"]
         ]
+
     async def _get_response(
         self,
-        messsages: list[Message],
+        messages: list[Message],
         session_id: str,
         user_id: Optional[str] = None,
     ) -> list[dict]:
@@ -162,25 +168,24 @@ class IanGraph:
         """
         if self._graph is None:
             self._graph = await self.create_graph()
-        
+
         config = {
-            "configurable": {"thread_id":session_id},
-            "callbacks":[callbackHandle()],
-            "metadata":{
-            "debug":False,
-            }
+            "configurable": {"thread_id": session_id},
+            "metadata": {
+                "debug": False,
+            },
         }
         try:
             response = await self._graph.ainvoke(
-                {"messages":dump_messages(messages),"session_id":session_id}, config
+                {"messages": dump_messages(messages), "session_id": session_id}, config
             )
             return self.__process_message(response["messages"])
         except Exception as e:
-            logger.error("error_getting_response", error=str(e))
+            logger.error(f"error_getting_response: {e}")
             raise e
-      
-    async def _chat(self,state: GraphState) -> dict:
-        
+
+    async def _chat(self, state: GraphState) -> dict:
+
         logger.info(f"=== DÉBUT CHATBOT ===")
         logger.info(f"State reçu: {state}")
 
@@ -197,10 +202,7 @@ class IanGraph:
             logger.error(f"Erreur dans chatbot: {e}")
             logger.error(f"Traceback:", exc_info=True)
             raise
-            
-        
-            
-    
+
     async def create_graph(self) -> Optional[CompiledStateGraph]:
         """Create and configure the LangGraph workflow.
 
@@ -215,11 +217,18 @@ class IanGraph:
                 logger.error(f"Erreur initialisation ToolNode: {e}")
                 logger.error(f"Traceback:", exc_info=True)
                 raise
-                # Add edges
-            
-                logger.info("Ajout des nodes au graph...")
+
             try:
-                graph_builder.add_node("chatbot", chatbot)
+                graph_builder = StateGraph(GraphState)
+                logger.info("StateGraph initialisé avec succès")
+            except Exception as e:
+                logger.error(f"Erreur initialisation StateGraph: {e}")
+                logger.error(f"Traceback:", exc_info=True)
+                raise
+
+            logger.info("Ajout des nodes au graph...")
+            try:
+                graph_builder.add_node("chatbot", self._chat)
                 # graph_builder.add_node("human_verif", human_pref_validator)
                 graph_builder.add_node("tools", tool_node)
                 logger.info("Nodes ajoutés avec succès")
@@ -227,7 +236,7 @@ class IanGraph:
                 logger.error(f"Erreur ajout des nodes: {e}")
                 logger.error(f"Traceback:", exc_info=True)
                 raise
-            
+
             logger.info("Ajout des edges au graph...")
             try:
                 graph_builder.add_edge(START, "chatbot")
@@ -238,17 +247,12 @@ class IanGraph:
                 logger.error(f"Erreur ajout des edges: {e}")
                 logger.error(f"Traceback:", exc_info=True)
                 raise
-                
+
         if self._graph is None:
             # ✅ Utilise MongoDB, pas PostgreSQL
-            async with AsyncMongoDBSaver.from_conn_string(os.getenv("MONGO_URI")) as checkpointer:
+            async with AsyncMongoDBSaver.from_conn_string(
+                os.getenv("MONGO_URI")
+            ) as checkpointer:
                 # ... votre logique de graph
                 self._graph = graph_builder.compile(checkpointer=checkpointer)
         return self._graph
-                
-                
-    
-        
-        
-    
-    

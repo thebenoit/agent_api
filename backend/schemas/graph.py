@@ -2,7 +2,7 @@
 
 import re
 import uuid
-from typing import Annotated
+from typing import Annotated, Dict, List
 
 from langgraph.graph.message import add_messages
 from pydantic import (
@@ -12,13 +12,44 @@ from pydantic import (
 )
 
 
+class RangeFilter(BaseModel):
+    """Filter for range values (min/max)."""
+
+    min: int = Field(..., description="Minimum value")
+    max: int = Field(..., description="Maximum value")
+
+
 class GraphState(BaseModel):
     """State definition for the LangGraph Agent/Workflow."""
 
     messages: Annotated[list, add_messages] = Field(
         default_factory=list, description="The messages in the conversation"
     )
-    session_id: str = Field(..., description="The unique identifier for the conversation session")
+    session_id: str = Field(
+        ..., description="The unique identifier for the conversation session"
+    )
+
+    # Attributs transmis depuis ian.py State
+    system_prompt: str = Field(
+        default="", description="System prompt for the conversation"
+    )
+    what_to_avoid: str = Field(default="", description="Things to avoid in the search")
+    what_worked_before: str = Field(
+        default="", description="What worked in previous searches"
+    )
+    preferences: str = Field(default="", description="User preferences")
+    bedrooms: Dict[str, RangeFilter] = Field(
+        default_factory=dict, description="Bedroom preferences"
+    )
+    price: Dict[str, RangeFilter] = Field(
+        default_factory=dict, description="Price preferences"
+    )
+    location: Dict[str, RangeFilter] = Field(
+        default_factory=dict, description="Location preferences"
+    )
+    others: Dict[str, RangeFilter] = Field(
+        default_factory=dict, description="Other preferences"
+    )
 
     @field_validator("session_id")
     @classmethod
@@ -41,5 +72,7 @@ class GraphState(BaseModel):
         except ValueError:
             # If not a UUID, check for safe characters only
             if not re.match(r"^[a-zA-Z0-9_\-]+$", v):
-                raise ValueError("Session ID must contain only alphanumeric characters, underscores, and hyphens")
+                raise ValueError(
+                    "Session ID must contain only alphanumeric characters, underscores, and hyphens"
+                )
             return v

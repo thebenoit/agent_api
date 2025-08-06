@@ -3,7 +3,9 @@ import os
 import uvicorn
 
 # from agents.ian import graph
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 from langchain_core.messages import HumanMessage, AIMessage
@@ -15,10 +17,47 @@ from agents.graph import IanGraph
 from schemas import ChatRequest
 from database_manager import mongo_manager
 import atexit
+import logging
+
+# Configuration du logging
+logger = logging.getLogger(__name__)
 
 agent = IanGraph()
 
 app = FastAPI()
+
+
+
+
+
+# Gestionnaire d'exceptions global
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Gestionnaire global pour les HTTPException"""
+    logger.error(f"HTTPException capturée: {exc.status_code} - {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": "Erreur HTTP",
+            "message": exc.detail,
+            "status_code": exc.status_code,
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Gestionnaire global pour toutes les autres exceptions"""
+    logger.error(f"Exception non gérée: {type(exc).__name__}: {str(exc)}")
+    logger.error("Traceback complet:", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Erreur interne du serveur",
+            "message": "Une erreur inattendue s'est produite",
+            "details": "Veuillez réessayer plus tard",
+        },
+    )
 
 
 # Ajouter le middleware d'authentification
@@ -30,6 +69,17 @@ async def auth_middleware_wrapper(request: Request, call_next):
 # class ChatRequest(BaseModel):
 #     message: str
 
+# Configuration CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",  # React dev server
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class chatResponse(BaseModel):
     response: str
@@ -70,7 +120,13 @@ async def chat(request: ChatRequest, req: Request):
 
         user_info = mongo_db.get_user_by_id(req.state.user_id)
         if user_info is None:
-            return {"error": "Utilisateur non trouvé"}, 404
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "Utilisateur non trouvé",
+                    "message": "L'utilisateur n'existe plus dans la base de données",
+                },
+            )
 
         # print("user_info:", user_info)
 
@@ -98,11 +154,25 @@ async def chat(request: ChatRequest, req: Request):
 
         return {"response": agent_response}
     except NotImplementedError as e:
-        print(f"Erreur NotImplementedError: {e}")
-        return {"error": "Fonctionnalité non implémentée", "details": str(e)}, 501
+        logger.error(f"Erreur NotImplementedError: {e}")
+        return JSONResponse(
+            status_code=501,
+            content={
+                "error": "Fonctionnalité non implémentée",
+                "message": "Cette fonctionnalité n'est pas encore disponible",
+                "details": str(e),
+            },
+        )
     except Exception as e:
-        print(f"Erreur générale: {e}")
-        return {"error": "Erreur interne du serveur", "details": str(e)}, 500
+        logger.error(f"Erreur générale: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Erreur interne du serveur",
+                "message": "Une erreur s'est produite lors du traitement de votre demande",
+                "details": "Veuillez réessayer plus tard",
+            },
+        )
 
 
 # Gestionnaire de fermeture propre

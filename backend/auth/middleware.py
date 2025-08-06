@@ -25,13 +25,24 @@ async def auth_middleware(request: Request, call_next):
     logger.info(f"Méthode: {request.method}")
     logger.info(f"Headers: {dict(request.headers)}")
 
+    if request.method == "OPTIONS":
+        logger.info("Requête OPTIONS détectée - passage direct au middleware suivant")
+        return await call_next(request)
+
     try:
         secret_key = os.getenv("SECRET_KEY")
         logger.info(f"SECRET_KEY configurée: {'Oui' if secret_key else 'Non'}")
 
         if not secret_key:
             logger.error("SECRET_KEY non configurée")
-            raise HTTPException(status_code=500, detail="SECRET_KEY non configurée")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Erreur de configuration",
+                    "message": "SECRET_KEY non configurée",
+                    "details": "Le serveur n'est pas correctement configuré",
+                },
+            )
 
         # Extraire le token du header Authorisation
         auth_header = request.headers.get("Authorization")
@@ -39,8 +50,13 @@ async def auth_middleware(request: Request, call_next):
 
         if not auth_header or not auth_header.startswith("Bearer "):
             logger.warning("Token d'authentification manquant ou format incorrect")
-            raise HTTPException(
-                status_code=401, detail="Token d'authentification manquant"
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "Authentification requise",
+                    "message": "Token d'authentification manquant ou format incorrect",
+                    "details": "Veuillez fournir un token Bearer valide dans le header Authorization",
+                },
             )
 
         token = auth_header.split(" ")[1]
@@ -63,7 +79,14 @@ async def auth_middleware(request: Request, call_next):
 
             if not user_id:
                 logger.error("user_id manquant dans le token décodé")
-                raise HTTPException(status_code=401, detail="Token invalide")
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": "Token invalide",
+                        "message": "Le token ne contient pas d'identifiant utilisateur valide",
+                        "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
+                    },
+                )
 
             logger.info("Recherche de l'utilisateur dans la base de données...")
             user = mongo_db.get_user_by_id(user_id)
@@ -77,7 +100,14 @@ async def auth_middleware(request: Request, call_next):
 
             if not user:
                 logger.error(f"Utilisateur non trouvé pour user_id: {user_id}")
-                raise HTTPException(status_code=401, detail="Utilisateur non trouvé")
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": "Utilisateur non trouvé",
+                        "message": "L'utilisateur associé à ce token n'existe plus",
+                        "details": "Veuillez vous reconnecter",
+                    },
+                )
 
             # 5. Injecter les données dans request.state
             logger.info("Injection des données dans request.state...")
@@ -96,19 +126,67 @@ async def auth_middleware(request: Request, call_next):
             logger.info("=== FIN MIDDLEWARE AUTH - CONTINUATION ===")
             return await call_next(request)
 
-        except jwt.InvalidTokenError as e:
-            logger.error(f"Erreur de décodage JWT: {e}")
-            raise HTTPException(status_code=401, detail="Token invalide")
-        except Exception as e:
-            logger.error(f"Erreur détaillée: {type(e).__name__}: {str(e)}")
-            logger.error(f"Traceback complet:", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail=f"Erreur d'authentification: {str(e)}"
+        except jwt.ExpiredSignatureError as e:
+            logger.error(f"Token expiré: {e}")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "Token expiré",
+                    "message": "Votre session a expiré",
+                    "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
+                },
             )
-    except HTTPException:
-        logger.info("HTTPException relancée")
-        raise
+        except jwt.InvalidSignatureError as e:
+            logger.error(f"Signature du token invalide: {e}")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "Token invalide",
+                    "message": "Le token d'authentification est corrompu",
+                    "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
+                },
+            )
+        except jwt.DecodeError as e:
+            logger.error(f"Erreur de décodage JWT: {e}")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "Token invalide",
+                    "message": "Le format du token d'authentification est incorrect",
+                    "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
+                },
+            )
+        except jwt.InvalidTokenError as e:
+            logger.error(f"Token JWT invalide: {e}")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "Token invalide",
+                    "message": "Le token d'authentification est invalide",
+                    "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
+                },
+            )
+        except Exception as e:
+            logger.error(
+                f"Erreur inattendue lors du décodage: {type(e).__name__}: {str(e)}"
+            )
+            logger.error(f"Traceback complet:", exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Erreur d'authentification",
+                    "message": "Une erreur s'est produite lors de l'authentification",
+                    "details": "Veuillez réessayer plus tard",
+                },
+            )
     except Exception as e:
         logger.error(f"Erreur critique dans le middleware: {e}")
         logger.error(f"Traceback complet:", exc_info=True)
-        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Erreur interne du serveur",
+                "message": "Une erreur inattendue s'est produite",
+                "details": "Veuillez réessayer plus tard",
+            },
+        )

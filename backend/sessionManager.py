@@ -11,7 +11,15 @@ from selenium.webdriver.chrome.options import Options
 from seleniumwire.undetected_chromedriver import ChromeOptions
 from urllib.parse import urlparse
 import asyncio
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, UndetectedAdapter, ProxyConfig
+from crawl4ai import (
+    AsyncWebCrawler,
+    BrowserConfig,
+    CrawlerRunConfig,
+    UndetectedAdapter,
+    ProxyConfig,
+    RoundRobinProxyStrategy,
+    CacheMode,
+)
 from crawl4ai.async_crawler_strategy import AsyncPlaywrightCrawlerStrategy
 import random
 
@@ -28,27 +36,26 @@ class SessionsManager:
         #     "http": os.getenv("PROXIES_URL"),
         #     "https": os.getenv("PROXIES_URL"),
         # }
-        
-        self.proxies = os.getenv("PROXIES_URL")#ProxyConfig.from_env()
-        #eg: export PROXIES="ip1:port1:username1:password1,ip2:port2:username2:password2"
+
+        self.proxies = ProxyConfig.from_env()  # ProxyConfig.from_env()
+        # eg: export PROXIES="ip1:port1:username1:password1,ip2:port2:username2:password2"
         if not self.proxies:
             print("No proxies found in environment. Set PROXIES env variable!")
             return
 
-
-        # class ProxyConfig:
-        #     def __init__(self, server, username, password):
-        #         self.server = server
-        #         self.username = username
-        #         self.password = password
-
-        # self.proxy_config = ProxyConfig(
-        #     server=os.getenv("PROXIES_URL"),
-        #     username=os.getenv("PROXY_USERNAME"),
-        #     password=os.getenv("PROXY_PASSWORD"),
-        # )
+        self.proxy_config = ProxyConfig(
+            server=os.getenv("PROXY_SERVER"),
+            username=os.getenv("PROXY_USERNAME"),
+            password=os.getenv("PROXY_PASSWORD"),
+        )
+        
+        if not self.proxy_config:
+            print("No proxy config found in environment. Set PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD env variables!")
+            return
 
         proxy_options = {}
+        
+        
 
         self.chrome_options = uc.ChromeOptions()
         self.chrome_options.add_argument("--ignore-ssl-errors=yes")
@@ -74,23 +81,31 @@ class SessionsManager:
         url="https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.50889&longitude=-73.63167&radius=7&locale=fr_CA",
     ):
         try:
-            print("init_undetected_crawler")
+
             undetected_adapter = UndetectedAdapter()
-            print("undetected_adapter initialized...")
+
+            self.proxy_strategy = RoundRobinProxyStrategy(self.proxies)
 
             browser_config = BrowserConfig(
-                headless=True,
+                headless=False,
                 verbose=True,
-                proxy=self.proxies,
-                # proxy_config=self.proxy_config,
+                
+                # proxy=f"http://{os.getenv("PROXIES_URL")}",
+                #proxy_config=self.proxy_config,
+                extra_args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                ],
             )
 
             crawler_config = CrawlerRunConfig(
                 # url=url,
                 capture_network_requests=True,
-                wait_until="domcontentloaded",
                 wait_for_images=True,
-                simulate_user=True,
+                cache_mode=CacheMode.BYPASS,
+                proxy_rotation_strategy=self.proxy_strategy,
+                # simulate_user=True,
             )
 
             crawler_strategy = AsyncPlaywrightCrawlerStrategy(
@@ -106,17 +121,42 @@ class SessionsManager:
 
                 if result.success:
                     print("Session: \n", result.session_id, "\n")
-                    #print("HEADERS: \n", result.response_headers[:10], "\n")
+                    # print("HEADERS: \n", result.response_headers[:10], "\n")
                     self._dump_response_to_json(
                         result.response_headers, result.session_id, "response_headers"
                     )
                 else:
-                    print("Crawler failed to load the page")
+                    print("Crawler failed to load the page: ", result.error_message)
                 if result.network_requests:
-                    #print("Network requests: \n", result.network_requests[:10], "\n")
-                    self._dump_response_to_json(
-                        result.network_requests, result.session_id, "network_requests"
-                    )
+                    # Filter only GraphQL requests
+                    try:
+                        graphql_requests = []
+                        for req in result.network_requests:
+                            # Support dict-like or object-like entries
+                            url_value = None
+                            if isinstance(req, dict):
+                                url_value = req.get("url")
+                            else:
+                                url_value = getattr(req, "url", None)
+
+                            if (
+                                isinstance(url_value, str)
+                                and "graphql" in url_value.lower()
+                            ):
+                                graphql_requests.append(req)
+
+                        if graphql_requests:
+                            self._dump_response_to_json(
+                                graphql_requests,
+                                result.session_id,
+                                "network_requests_graphql",
+                            )
+                        else:
+                            print("No GraphQL network requests found")
+                    except Exception as _:
+                        print(
+                            "Failed to filter GraphQL network requests; skipping write"
+                        )
                 else:
                     print("No network requests found")
 

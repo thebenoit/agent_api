@@ -41,3 +41,6 @@ ai
 __pycache__/
 *.py[cod]
 *$py.class
+data
+
+facebook_graphql_data.json

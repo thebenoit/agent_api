@@ -27,9 +27,6 @@ agent = IanGraph()
 app = FastAPI()
 
 
-
-
-
 # Gestionnaire d'exceptions global
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -80,6 +77,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 class chatResponse(BaseModel):
     response: str

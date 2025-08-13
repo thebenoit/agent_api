@@ -68,13 +68,14 @@ except Exception as e:
 
 
 @tool
-def search_listing(
+async def search_listing(
     city: str,
     min_bedrooms: int,
     max_bedrooms: int,
     min_price: int,
     max_price: int,
     location_near: Optional[list] = None,
+    enrich_top_k: int = 3,
 ):
     """Search listings in listings website according to user preferences.
 
@@ -85,11 +86,12 @@ def search_listing(
         min_price: Minimum price wanted
         max_price: Maximum price wanted
         location_near: Optional nearby locations in a list
+        enrich_top_k: Number of listings to enrich with page details
 
     """
     logger.info(f"=== DÉBUT SEARCH_LISTING ===")
     logger.info(
-        f"Paramètres reçus: city={city}, min_bedrooms={min_bedrooms}, max_bedrooms={max_bedrooms}, min_price={min_price}, max_price={max_price}, location_near={location_near}"
+        f"Paramètres reçus: city={city}, min_bedrooms={min_bedrooms}, max_bedrooms={max_bedrooms}, min_price={min_price}, max_price={max_price}, location_near={location_near}, enrich_top_k={enrich_top_k}"
     )
 
     try:
@@ -117,9 +119,15 @@ def search_listing(
 
         print("Selected location:", f"{name} (lat: {lat}, lon: {lon})")
 
-        logger.info("Appel de Facebook.execute...")
-        result = facebook.execute(
-            lat, lon, min_price, max_price, min_bedrooms, max_bedrooms
+        logger.info("Appel de Facebook.execute_async...")
+        result = await facebook.execute_async(
+            lat,
+            lon,
+            min_price,
+            max_price,
+            min_bedrooms,
+            max_bedrooms,
+            top_k=enrich_top_k,
         )
         logger.info(
             f"Résultat Facebook: {len(result) if isinstance(result, list) else 'Non-liste'} éléments"
@@ -182,6 +190,7 @@ class IanGraph:
                 db_name=os.getenv("MONGO_DB"),
                 collection_name="checkpointers",
             ) as checkpointer:
+
                 # Créer le graph builder si pas encore fait
                 if not hasattr(self, "_graph_builder"):
                     self._graph_builder = await self._create_graph_builder()

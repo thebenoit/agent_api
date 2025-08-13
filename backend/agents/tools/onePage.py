@@ -2,6 +2,8 @@ from agents.tools.base_tool import BaseTool
 from agents.tools.bases.base_scraper import BaseScraper
 import os
 import re
+import logging
+from bs4 import BeautifulSoup
 from crawl4ai import (
     AsyncWebCrawler,
     BrowserConfig,
@@ -9,7 +11,6 @@ from crawl4ai import (
     CacheMode,
     RoundRobinProxyStrategy,
     ProxyConfig,
-    JsonCssExtractionStrategy,
     JsonCssExtractionStrategy,
 )
 
@@ -29,25 +30,22 @@ class OnePage(BaseTool, BaseScraper):
             "name": "Facebook Images",
             "baseSelector": "body",
             "fields": [
-                
-                    {
-                        "name": "Description", 
-                        "selector": "div.xz9dl7a > div[aria-hidden='false'] > span[dir='auto']",
-                        "type": "text"
-                    },
-                
                 {
-                 
-                     "name":"sous_titre_details",
-                     "selector":"div.xwib8y2",
-                     "type":"nested_list",
-                     "fields":[
-                         { "name":"sous_titre",
-                         "selector":"div, span.x193iq5w.xeuugli.x13faqbe.x1vvkbs.xlh3980.xvmahel.x1n0sxbx.x1lliihq.x1s928wv.xhkezso.x1gmr53x.x1cpjm7i.x1fgarty.x1943h6x.x4zkp8e.x3x7a5m.x6prxxf.xvq8zen.xo1l8bm.xzsf02u.x1yc453h",
-                         "type":"text"
-                         }
-                     ],
-                
+                    "name": "Description_candidates",
+                    "selector": "div[role='main'] span[dir='auto']",
+                    "type": "text",
+                },
+                {
+                    "name": "sous_titre_details",
+                    "selector": "div.xwib8y2",
+                    "type": "nested_list",
+                    "fields": [
+                        {
+                            "name": "sous_titre",
+                            "selector": "div, span.x193iq5w.xeuugli.x13faqbe.x1vvkbs.xlh3980.xvmahel.x1n0sxbx.x1lliihq.x1s928wv.xhkezso.x1gmr53x.x1cpjm7i.x1fgarty.x1943h6x.x4zkp8e.x3x7a5m.x6prxxf.xvq8zen.xo1l8bm.xzsf02u.x1yc453h",
+                            "type": "text",
+                        }
+                    ],
                 },
                 # {
                 #     "name":"Details",
@@ -59,38 +57,34 @@ class OnePage(BaseTool, BaseScraper):
                 #         "type":"text"
                 #        }
                 #     ],
-                    
                 # },
                 {
                     "name": "images",
                     "selector": "div[role='main']",
                     "type": "nested_list",
                     "fields": [
- 
                         {
                             "name": "thumbnails",
-                            "selector": "div[aria-label*='Thumbnail']",
+                            "selector": "div[aria-label*='Thumbnail'], div[aria-label*='Vignette']",
                             "type": "nested_list",
                             "fields": [
                                 {
                                     "name": "src",
                                     "selector": "img",
                                     "type": "attribute",
-                                    "attribute": "src"
+                                    "attribute": "src",
                                 },
                                 {
                                     "name": "alt",
                                     "selector": "img",
                                     "type": "attribute",
-                                    "attribute": "alt"
-                                }
-                            ]
+                                    "attribute": "alt",
+                                },
+                            ],
                         },
-
-                    ]
-                }
-            ]
-        
+                    ],
+                },
+            ],
         }
 
     @property
@@ -125,7 +119,15 @@ class OnePage(BaseTool, BaseScraper):
     def scrape(self, url: str):
         return "allo"
 
-    async def fetch_page(self, url: str):
+    async def fetch_page(
+        self,
+        url: str,
+        *,
+        return_raw_html: bool = False,
+        return_extracted_raw: bool = False,
+    ):
+        logger = logging.getLogger(__name__)
+        logger.info("[OnePage.fetch_page] start url=%s", url)
 
         # load proxies and create rotation strategy
         proxy_strategy = None
@@ -172,13 +174,144 @@ class OnePage(BaseTool, BaseScraper):
         async with AsyncWebCrawler(config=browser_config) as crawler:
             result = await crawler.arun(url=url, config=config)
 
-            if result.success:
-                print("📄 HTML Length:", len(result.html))
-                # print("success: ", result.markdown[])
-                # 3. Vérifier les données extraites
-                if hasattr(result, "extracted_content"):
-                    print("🎯 Extracted data:", result.extracted_content)
+            if not result.success:
+                logger.warning("[OnePage.fetch_page] échec result.success=False")
+                return {}
+
+            extracted = getattr(result, "extracted_content", None)
+            if extracted is None:
+                logger.warning("[OnePage.fetch_page] pas de extracted_content")
+                return {}
+
+            # Normalisation du contenu extrait pour unifier la sortie
+            try:
+                if isinstance(extracted, str):
+                    import json
+
+                    extracted = json.loads(extracted)
+            except Exception as e:
+                logger.exception("[OnePage.fetch_page] erreur parsing JSON: %s", e)
+                # retourne brut si non JSON
+                if return_extracted_raw:
+                    out = {"raw": extracted}
+                    if return_raw_html:
+                        out["html"] = result.html
+                    return out
                 else:
-                    print("⚠️ No extracted content found")
-            if result.error_message:
-                print("erreur")
+                    return {"html": result.html} if return_raw_html else {}
+
+            def to_images_list(images_node):
+                normalized = []
+                if isinstance(images_node, dict):
+                    images_node = [images_node]
+                if isinstance(images_node, list):
+                    for entry in images_node:
+                        thumbs = (
+                            entry.get("thumbnails") if isinstance(entry, dict) else None
+                        )
+                        if isinstance(thumbs, dict):
+                            thumbs = [thumbs]
+                        if isinstance(thumbs, list):
+                            for t in thumbs:
+                                if not isinstance(t, dict):
+                                    continue
+                                src = t.get("src")
+                                alt = t.get("alt")
+                                if src:
+                                    normalized.append({"src": src, "alt": alt})
+                return normalized
+
+            description = None
+            if isinstance(extracted, dict):
+                # Prendre la plus longue chaîne plausible comme description
+                candidates = extracted.get("Description_candidates")
+                if isinstance(candidates, list) and candidates:
+                    texts = []
+                    for d in candidates:
+                        if isinstance(d, str) and d.strip():
+                            texts.append(d.strip())
+                        elif isinstance(d, dict):
+                            txt = d.get("text") or d.get("value")
+                            if isinstance(txt, str) and txt.strip():
+                                texts.append(txt.strip())
+                    if texts:
+                        # Heuristique: choisir la chaîne la plus longue > 60 caractères
+                        texts_sorted = sorted(texts, key=lambda s: len(s), reverse=True)
+                        for t in texts_sorted:
+                            if len(t) >= 60:
+                                description = t
+                                break
+                        if description is None:
+                            description = texts_sorted[0]
+
+                images = to_images_list(extracted.get("images"))
+            else:
+                images = []
+
+            # Fallback HTML parse si rien trouvé
+            if not description or not images:
+                try:
+                    soup = BeautifulSoup(result.html, "html.parser")
+                    if not description:
+                        main = soup.select_one("div[role='main']") or soup
+                        span_texts = [
+                            s.get_text(strip=True)
+                            for s in main.select("span[dir='auto']")
+                            if s.get_text(strip=True)
+                        ]
+                        if span_texts:
+                            span_texts.sort(key=lambda s: len(s), reverse=True)
+                            for t in span_texts:
+                                if len(t) >= 60:
+                                    description = t
+                                    break
+                            if description is None:
+                                description = span_texts[0]
+
+                    if not images:
+                        imgs = []
+                        for img in soup.select("div[role='main'] img"):
+                            src = img.get("src")
+                            if not src and img.get("srcset"):
+                                # prendre la plus grande dans srcset
+                                try:
+                                    parts = [
+                                        p.strip() for p in img.get("srcset").split(",")
+                                    ]
+                                    if parts:
+                                        src = parts[-1].split(" ")[0]
+                                except Exception:
+                                    pass
+                            if src and (
+                                "fbcdn" in src
+                                or "scontent" in src
+                                or "safe_image.php" in src
+                            ):
+                                alt = img.get("alt")
+                                imgs.append({"src": src, "alt": alt})
+                        # dédoublonner par src
+                        seen = set()
+                        images = []
+                        for im in imgs:
+                            if im["src"] not in seen:
+                                images.append(im)
+                                seen.add(im["src"])
+                except Exception as e:
+                    logger.exception(
+                        "[OnePage.fetch_page] fallback HTML parse error: %s", e
+                    )
+
+            out = {
+                "description": description,
+                "images": images,
+            }
+            if return_raw_html:
+                out["html"] = result.html
+            if return_extracted_raw:
+                out["raw_extracted"] = extracted
+            logger.info(
+                "[OnePage.fetch_page] ok desc_len=%d images=%d",
+                len(out.get("description") or ""),
+                len(out.get("images") or []),
+            )
+            return out

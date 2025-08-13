@@ -1,4 +1,5 @@
 from typing import Any
+import asyncio
 import os
 from dotenv import load_dotenv
 from seleniumwire import webdriver  # Import from seleniumwire
@@ -36,6 +37,10 @@ load_dotenv()
 
 from agents.tools.base_tool import BaseTool
 from agents.tools.bases.base_scraper import BaseScraper
+from agents.tools.onePage import OnePage
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SearchFacebook(BaseTool, BaseScraper):
@@ -58,6 +63,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         self.har = None
         self.filtered_har = None
         self.listings = []
+        self.seen_listing_ids = set()
 
         proxies = {"http": os.getenv("PROXIES_URL"), "https": os.getenv("PROXIES_URL")}
 
@@ -113,6 +119,7 @@ class SearchFacebook(BaseTool, BaseScraper):
     ) -> Any:
 
         self.listings = []
+        self.seen_listing_ids = set()
 
         inputs = {
             "lat": lat,
@@ -136,6 +143,130 @@ class SearchFacebook(BaseTool, BaseScraper):
             print("Aucune annonce trouvée: ")
 
         return listings
+
+    async def execute_async(
+        self,
+        lat: float,
+        lon: float,
+        minBudget: float,
+        maxBudget: float,
+        minBedrooms: int,
+        maxBedrooms: int,
+        *,
+        top_k: int = 3,
+        concurrency: int = 3,
+        timeout_sec: float = 30.0,
+    ) -> Any:
+        logger.info(
+            "[execute_async] start lat=%.5f lon=%.5f price=[%s,%s] beds=[%s,%s] top_k=%s conc=%s timeout=%ss",
+            lat,
+            lon,
+            minBudget,
+            maxBudget,
+            minBedrooms,
+            maxBedrooms,
+            top_k,
+            concurrency,
+            timeout_sec,
+        )
+
+        # Exécuter la collecte synchrone existante dans un thread
+        def _run_sync():
+            return self.execute(
+                lat, lon, minBudget, maxBudget, minBedrooms, maxBedrooms
+            )
+
+        listings = await asyncio.to_thread(_run_sync)
+        logger.info(
+            "[execute_async] base listings récupérés: %d",
+            len(listings) if isinstance(listings, list) else -1,
+        )
+        if not listings:
+            return []
+
+        onepage = OnePage()
+        sem = asyncio.Semaphore(concurrency)
+
+        async def enrich(item: dict) -> dict:
+            url = item.get("for_sale_item", {}).get("share_uri") or (
+                f"https://www.facebook.com/marketplace/item/{item.get('_id','')}"
+                if item.get("_id")
+                else None
+            )
+            if not url:
+                item["onepage"] = {"error": True, "reason": "no url"}
+                logger.warning(
+                    "[enrich] aucun URL pour _id=%s title=%s",
+                    item.get("_id"),
+                    item.get("for_sale_item", {}).get("marketplace_listing_title"),
+                )
+                return item
+            try:
+                start = asyncio.get_event_loop().time()
+                logger.debug("[enrich] start _id=%s url=%s", item.get("_id"), url)
+                async with sem:
+                    data = await asyncio.wait_for(
+                        onepage.fetch_page(url), timeout=timeout_sec
+                    )
+                # Fusion dans la structure de sortie
+                item.setdefault("details", {})
+                if isinstance(data, dict):
+                    if data.get("description"):
+                        item["details"]["description"] = data["description"]
+                    if data.get("images"):
+                        item["details"]["images"] = data["images"]
+                item["details"]["source_url"] = url
+                elapsed = asyncio.get_event_loop().time() - start
+                images_count = len(item["details"].get("images", []))
+                desc_len = len(item["details"].get("description", "") or "")
+                logger.info(
+                    "[enrich] ok _id=%s in %.2fs images=%d desc_len=%d",
+                    item.get("_id"),
+                    elapsed,
+                    images_count,
+                    desc_len,
+                )
+            except Exception as e:
+                item["onepage"] = {"error": True, "reason": str(e)}
+                logger.exception(
+                    "[enrich] erreur _id=%s url=%s: %s", item.get("_id"), url, e
+                )
+            return item
+
+        targets = listings[: top_k if top_k > 0 else 0]
+        logger.info(
+            "[execute_async] enrich targets: %s",
+            [t.get("_id") for t in targets],
+        )
+        if targets:
+            enriched = await asyncio.gather(*(enrich(li) for li in targets))
+            listings[: len(enriched)] = enriched
+            logger.info("[execute_async] enrich terminé: %d items", len(enriched))
+
+        # Optionnel: normaliser la structure retournée
+        logger.debug("[execute_async] normalisation de la sortie...")
+
+        normalized = [
+            self.normalize_item(x)
+            for x in listings[: top_k if top_k > 0 else len(listings)]
+        ]
+        if normalized:
+            sample = {
+                "id": normalized[0].get("id"),
+                "title": normalized[0].get("title"),
+                "price": normalized[0].get("price"),
+                "bedrooms": normalized[0].get("bedrooms"),
+                "bathrooms": normalized[0].get("bathrooms"),
+                "url": normalized[0].get("url"),
+            }
+            logger.info("[execute_async] normalized sample: %s", sample)
+            logger.info("[execute_async] normalized: %s", normalized)
+        logger.debug(
+            "[execute_async] normalized count=%d ids=%s",
+            len(normalized),
+            [n.get("id") for n in normalized],
+        )
+        return normalized
 
     ##methode to get the har file from the driver
     def get_har(self):
@@ -229,6 +360,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         return data_dict
 
     def init_session(self):
+        print("init_session")
 
         headers, payload_to_send, resp_body = self.get_har_entry()
 
@@ -285,6 +417,10 @@ class SearchFacebook(BaseTool, BaseScraper):
                 ):
                     print("FOR SALE ITEM FOUND")
                     listing_id = node["node"]["for_sale_item"]["id"]
+                    # Early duplicate check to avoid unnecessary processing
+                    if listing_id in self.seen_listing_ids:
+                        continue
+                    self.seen_listing_ids.add(listing_id)
                     # Utiliser listing_id comme _id dans le document
                     # data = node["node"]
 
@@ -316,7 +452,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                         ]
                         print(f"Prix brut extrait: '{price_text}'")
                         # Supprimer les espaces, le symbole $ et convertir en nombre
-                        #price_numeric = self.clean_price(price_text)
+                        # price_numeric = self.clean_price(price_text)
 
                         # Extraire le nombre de chambres et de salles de bain
                     custom_title = node["node"]["for_sale_item"].get("custom_title", "")
@@ -353,21 +489,53 @@ class SearchFacebook(BaseTool, BaseScraper):
                             ),
                         },
                     }
-                    # Vérifie si l'annonce existe déjà dans la liste
-                    listing_exists = False
-                    for listing in self.listings:
-                        if listing.get("_id") == listing_id:
-                            listing_exists = True
-                            break
-
-                    if not listing_exists:
-                        print("Ajout de data--------->:")
-                        # print("filtered_data: \n", filtered_data)
-                        self.listings.append(filtered_data)
+                    # Ajoute directement (déjà filtré par set)
+                    print("Ajout de data--------->:")
+                    # print("filtered_data: \n", filtered_data)
+                    self.listings.append(filtered_data)
                 # else:
                 # print("no for_sale_item found")
         except KeyError as e:
             print(f"Erreur de structure dans le body : {e}")
+
+    def normalize_item(self, item: dict) -> dict:
+        """Normalise une annonce brute en un objet simple et uniformisé.
+
+        Retourne un dictionnaire avec les clés: id, title, price, bedrooms,
+        bathrooms, url, images, description, source.
+        """
+        try:
+            for_sale = item.get("for_sale_item", {}) or {}
+            details = item.get("details", {}) or {}
+
+            normalized = {
+                "id": item.get("_id"),
+                "title": for_sale.get("marketplace_listing_title", "") or "",
+                "price": (for_sale.get("formatted_price", {}) or {}).get("text")
+                or item.get("budget"),
+                "bedrooms": item.get("bedrooms"),
+                "bathrooms": item.get("bathrooms"),
+                "url": for_sale.get("share_uri"),
+                "images": details.get("images", []) or [],
+                "description": details.get("description"),
+                "source": "facebook",
+            }
+            logger.debug("[normalize_item] %s", normalized)
+            return normalized
+        except Exception as e:
+            logger.exception("[normalize_item] erreur: %s", e)
+            return {
+                "id": item.get("_id"),
+                "title": None,
+                "price": None,
+                "bedrooms": item.get("bedrooms"),
+                "bathrooms": item.get("bathrooms"),
+                "url": None,
+                "images": [],
+                "description": None,
+                "source": "facebook",
+                "error": str(e),
+            }
 
     def clean_bathrooms(self, custom_title):
         """

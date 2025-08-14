@@ -114,7 +114,7 @@ class SessionsManager:
             self.proxy_strategy = RoundRobinProxyStrategy(self.proxies)
 
             browser_config = BrowserConfig(
-                headless=False,
+                headless=True,
                 verbose=True,
                 # proxy=f"http://{os.getenv("PROXIES_URL")}",
                 # proxy_config=self.proxy_config,

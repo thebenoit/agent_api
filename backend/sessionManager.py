@@ -48,14 +48,14 @@ class SessionsManager:
             username=os.getenv("PROXY_USERNAME"),
             password=os.getenv("PROXY_PASSWORD"),
         )
-        
+
         if not self.proxy_config:
-            print("No proxy config found in environment. Set PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD env variables!")
+            print(
+                "No proxy config found in environment. Set PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD env variables!"
+            )
             return
 
         proxy_options = {}
-        
-        
 
         self.chrome_options = uc.ChromeOptions()
         self.chrome_options.add_argument("--ignore-ssl-errors=yes")
@@ -76,6 +76,33 @@ class SessionsManager:
         self.driver.get(url)
         time.sleep(15)
 
+    @staticmethod
+    def extract_request_headers_from_result(result):
+        graphql_headers = []
+        if not result or not getattr(result, "network_requests", None):
+            return graphql_headers
+
+        def get_req_headers(req):
+            if isinstance(req, dict):
+                return (
+                    req.get("request_headers")
+                    or req.get("headers")
+                    or (req.get("request") or {}).get("headers")
+                )
+            h = getattr(req, "request_headers", None) or getattr(req, "headers", None)
+            if h:
+                return h
+            request_obj = getattr(req, "request", None)
+            return getattr(request_obj, "headers", None) if request_obj else None
+
+        for req in result.network_requests:
+            u = req.get("url") if isinstance(req, dict) else getattr(req, "url", None)
+            if isinstance(u, str) and "graphql" in u.lower():
+                h = get_req_headers(req)
+                if h:
+                    graphql_headers.append({"url": u, "headers": h})
+        return graphql_headers
+
     async def init_undetected_crawler(
         self,
         url="https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.50889&longitude=-73.63167&radius=7&locale=fr_CA",
@@ -89,9 +116,8 @@ class SessionsManager:
             browser_config = BrowserConfig(
                 headless=False,
                 verbose=True,
-                
                 # proxy=f"http://{os.getenv("PROXIES_URL")}",
-                #proxy_config=self.proxy_config,
+                # proxy_config=self.proxy_config,
                 extra_args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
@@ -99,12 +125,18 @@ class SessionsManager:
                 ],
             )
 
+            # Keep a persistent session to run JS steps (close modal, map nudges) in the same tab
+            session_identifier = f"fb_session_{int(time.time())}"
+            print(f"[crawl] starting session: {session_identifier} url={url}")
+
             crawler_config = CrawlerRunConfig(
                 # url=url,
                 capture_network_requests=True,
                 wait_for_images=True,
                 cache_mode=CacheMode.BYPASS,
                 proxy_rotation_strategy=self.proxy_strategy,
+                scan_full_page=True,
+                session_id=session_identifier,
                 # simulate_user=True,
             )
 
@@ -117,34 +149,207 @@ class SessionsManager:
                 crawler_strategy=crawler_strategy, config=browser_config
             ) as crawler:
 
+                print("[crawl] initial load...")
                 result = await crawler.arun(url=url, config=crawler_config)
 
                 if result.success:
-                    print("Session: \n", result.session_id, "\n")
-                    # print("HEADERS: \n", result.response_headers[:10], "\n")
-                    self._dump_response_to_json(
-                        result.response_headers, result.session_id, "response_headers"
+                    total_reqs = (
+                        len(result.network_requests or [])
+                        if hasattr(result, "network_requests")
+                        else 0
                     )
+                    total_graphql = 0
+                    if getattr(result, "network_requests", None):
+                        for _r in result.network_requests:
+                            u = (
+                                _r.get("url")
+                                if isinstance(_r, dict)
+                                else getattr(_r, "url", None)
+                            )
+                            if isinstance(u, str) and "graphql" in u.lower():
+                                total_graphql += 1
+                    print(
+                        f"[crawl] initial load ok: network_requests={total_reqs} graphql={total_graphql}"
+                    )
+                    # Give the page extra time to fully settle before interacting
+                    print(
+                        "[crawl] waiting ~10s for page to fully settle before actions..."
+                    )
+                    await asyncio.sleep(10)
+                    reqs = self.extract_request_headers_from_result(result)
+                    if reqs:
+                        self._dump_response_to_json(
+                            reqs, result.session_id, "graphql_requests"
+                        )
+                    else:
+                        print("[crawl] No GraphQL requests found on initial load")
+
+                    # Try to close the login modal (X/labels/Escape)
+                    print("[modal] attempting to close modal (X/labels/Escape)...")
+                    close_modal_config = CrawlerRunConfig(
+                        session_id=session_identifier,
+                        js_only=True,
+                        js_code="""
+                        (function () {
+                          const tryClick = (sel) => {
+                            const el = document.querySelector(sel);
+                            if (el) { el.click(); return true; }
+                            return false;
+                          };
+                          const selectors = [
+                            'div[role="dialog"] [aria-label*="Fermer" i]',
+                            'div[role="dialog"] [aria-label*="Close" i]',
+                            '[data-testid="x_close_button"]',
+                            'button[aria-label*="Fermer" i]',
+                            'button[aria-label*="Close" i]'
+                          ];
+                          for (const s of selectors) { if (tryClick(s)) return; }
+                          const buttons = Array.from(document.querySelectorAll('div[role="dialog"] button, div[role="dialog"] [role="button"]'));
+                          for (const b of buttons) {
+                            const label = (b.getAttribute('aria-label') || b.textContent || '').trim();
+                            if (/^(fermer|close|dismiss)$/i.test(label)) { b.click(); return; }
+                          }
+                          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+                        })();
+                        """,
+                        wait_for="js:() => true",
+                        capture_network_requests=True,
+                    )
+
+                    try:
+                        modal_result = await crawler.arun(
+                            url=url, config=close_modal_config
+                        )
+                        if modal_result and getattr(
+                            modal_result, "network_requests", None
+                        ):
+                            m_total = (
+                                len(modal_result.network_requests or [])
+                                if hasattr(modal_result, "network_requests")
+                                else 0
+                            )
+                            m_graphql = 0
+                            for _r in modal_result.network_requests or []:
+                                u = (
+                                    _r.get("url")
+                                    if isinstance(_r, dict)
+                                    else getattr(_r, "url", None)
+                                )
+                                if isinstance(u, str) and "graphql" in u.lower():
+                                    m_graphql += 1
+                            print(
+                                f"[modal] step executed: network_requests={m_total} graphql={m_graphql}"
+                            )
+                            reqs_after = self.extract_request_headers_from_result(
+                                modal_result
+                            )
+                            if reqs_after:
+                                self._dump_response_to_json(
+                                    reqs_after,
+                                    modal_result.session_id,
+                                    "graphql_requests_after_modal",
+                                )
+                    except Exception:
+                        print("[modal] step failed (ignored)")
+
+                    # Click Zoom In (+) multiple times with short waits
+                    async def perform_zoom_in(times: int = 3, delay_ms: int = 1000):
+                        print(f"[zoom] clicking + {times}x, delay ~{delay_ms}ms")
+                        for i in range(1, times + 1):
+                            zoom_in_cfg = CrawlerRunConfig(
+                                session_id=session_identifier,
+                                js_only=True,
+                                js_code="""
+                                (function () {
+                                  const q = (sel) => document.querySelector(sel);
+                                  const selectors = [
+                                    '[aria-label*="Zoom avant" i][role="button"]',
+                                    'div[aria-label*="Zoom avant" i][role="button"]',
+                                    '[aria-label*="Zoom in" i][role="button"]',
+                                    'button[aria-label*="Zoom In" i]',
+                                    'button[aria-label*="Zoom avant" i]'
+                                  ];
+                                  let btn = null;
+                                  for (const s of selectors) { btn = q(s); if (btn) break; }
+                                  if (!btn) return;
+                                  try { btn.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
+                                  const rect = btn.getBoundingClientRect();
+                                  const x = rect.left + rect.width / 2;
+                                  const y = rect.top + rect.height / 2;
+                                  const fire = (type) => btn.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y }));
+                                  const firePtr = (type) => btn.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+                                  firePtr('pointerover'); fire('mouseover');
+                                  firePtr('pointerdown'); fire('mousedown');
+                                  btn.click();
+                                  firePtr('pointerup'); fire('mouseup');
+                                })();
+                                """,
+                                wait_for=f"js:() => new Promise(r => setTimeout(() => r(true), {delay_ms}))",
+                                capture_network_requests=True,
+                            )
+                            try:
+                                zoom_result = await crawler.arun(
+                                    url=url, config=zoom_in_cfg
+                                )
+                                if zoom_result and getattr(
+                                    zoom_result, "network_requests", None
+                                ):
+                                    reqs_zoom = (
+                                        self.extract_request_headers_from_result(
+                                            zoom_result
+                                        )
+                                    )
+                                    z_total = (
+                                        len(zoom_result.network_requests or [])
+                                        if hasattr(zoom_result, "network_requests")
+                                        else 0
+                                    )
+                                    z_graphql = 0
+                                    for _r in zoom_result.network_requests or []:
+                                        u = (
+                                            _r.get("url")
+                                            if isinstance(_r, dict)
+                                            else getattr(_r, "url", None)
+                                        )
+                                        if (
+                                            isinstance(u, str)
+                                            and "graphql" in u.lower()
+                                        ):
+                                            z_graphql += 1
+                                    print(
+                                        f"[zoom {i}/{times}] executed: network_requests={z_total} graphql={z_graphql} headers_dumped={len(reqs_zoom) if reqs_zoom else 0}"
+                                    )
+                                    if reqs_zoom:
+                                        self._dump_response_to_json(
+                                            reqs_zoom,
+                                            zoom_result.session_id,
+                                            f"graphql_requests_after_zoom_{i}",
+                                        )
+                            except Exception:
+                                print(f"[zoom {i}/{times}] step failed (ignored)")
+
+                    await perform_zoom_in(times=3, delay_ms=1000)
+
                 else:
                     print("Crawler failed to load the page: ", result.error_message)
-                if result.network_requests:
-                    # Filter only GraphQL requests
+
+                # Final pass on initial load result for specific GraphQL endpoint
+                if result and getattr(result, "network_requests", None):
                     try:
                         graphql_requests = []
                         for req in result.network_requests:
-                            # Support dict-like or object-like entries
                             url_value = None
                             if isinstance(req, dict):
                                 url_value = req.get("url")
                             else:
                                 url_value = getattr(req, "url", None)
-
                             if (
                                 isinstance(url_value, str)
                                 and "graphql" in url_value.lower()
+                                and "marketplace_rentals_map_view_stories"
+                                in url_value.lower()
                             ):
                                 graphql_requests.append(req)
-
                         if graphql_requests:
                             self._dump_response_to_json(
                                 graphql_requests,
@@ -152,13 +357,15 @@ class SessionsManager:
                                 "network_requests_graphql",
                             )
                         else:
-                            print("No GraphQL network requests found")
-                    except Exception as _:
+                            print(
+                                "[crawl] No GraphQL network requests found in final filter"
+                            )
+                    except Exception:
                         print(
-                            "Failed to filter GraphQL network requests; skipping write"
+                            "[crawl] Failed to filter GraphQL network requests; skipping write"
                         )
                 else:
-                    print("No network requests found")
+                    print("[crawl] No network requests found")
 
         except Exception as e:
             print("Error initializing crawler strategy:", e)

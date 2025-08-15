@@ -22,12 +22,16 @@ from crawl4ai import (
 )
 from crawl4ai.async_crawler_strategy import AsyncPlaywrightCrawlerStrategy
 import random
+from models.fb_sessions import FacebookSessionModel
+from schemas.fb_session import FacebookSession
 
 
 class SessionsManager:
     def __init__(self):
 
         self.driver = os.getenv("DRIVER_PATH")
+        self.user_id = "66bd41ade6e37be2ef4b4fc2"  # User ID fixe
+        self.fb_session_model = FacebookSessionModel()
 
         self.mongo = MongoClient(os.getenv("MONGO_URI"))
         # self.fb_sessions = self.db["fb_sessions"]
@@ -78,9 +82,9 @@ class SessionsManager:
 
     @staticmethod
     def extract_request_headers_from_result(result):
-        graphql_headers = []
+        graphql_data = []
         if not result or not getattr(result, "network_requests", None):
-            return graphql_headers
+            return graphql_data
 
         def get_req_headers(req):
             if isinstance(req, dict):
@@ -95,13 +99,31 @@ class SessionsManager:
             request_obj = getattr(req, "request", None)
             return getattr(request_obj, "headers", None) if request_obj else None
 
+        def get_req_body(req):
+            # Extraire le body/payload de la requête
+            if isinstance(req, dict):
+                return (
+                    req.get("request_body")
+                    or req.get("body")
+                    or (req.get("request") or {}).get("body")
+                )
+            return getattr(req, "request_body", None) or getattr(req, "body", None)
+
         for req in result.network_requests:
             u = req.get("url") if isinstance(req, dict) else getattr(req, "url", None)
             if isinstance(u, str) and "graphql" in u.lower():
-                h = get_req_headers(req)
-                if h:
-                    graphql_headers.append({"url": u, "headers": h})
-        return graphql_headers
+                headers = get_req_headers(req)
+                body = get_req_body(req)
+
+                if headers:
+                    graphql_data.append(
+                        {
+                            "url": u,
+                            "headers": headers,
+                            "body": body,  # Ajouter le body pour extraire payload/variables
+                        }
+                    )
+        return graphql_data
 
     async def init_undetected_crawler(
         self,
@@ -178,9 +200,7 @@ class SessionsManager:
                     await asyncio.sleep(10)
                     reqs = self.extract_request_headers_from_result(result)
                     if reqs:
-                        self._dump_response_to_json(
-                            reqs, result.session_id, "graphql_requests"
-                        )
+                        self._save_session_to_db(reqs, "initial_load")
                     else:
                         print("[crawl] No GraphQL requests found on initial load")
 
@@ -244,11 +264,7 @@ class SessionsManager:
                                 modal_result
                             )
                             if reqs_after:
-                                self._dump_response_to_json(
-                                    reqs_after,
-                                    modal_result.session_id,
-                                    "graphql_requests_after_modal",
-                                )
+                                self._save_session_to_db(reqs_after, "after_modal")
                     except Exception:
                         print("[modal] step failed (ignored)")
 
@@ -320,10 +336,8 @@ class SessionsManager:
                                         f"[zoom {i}/{times}] executed: network_requests={z_total} graphql={z_graphql} headers_dumped={len(reqs_zoom) if reqs_zoom else 0}"
                                     )
                                     if reqs_zoom:
-                                        self._dump_response_to_json(
-                                            reqs_zoom,
-                                            zoom_result.session_id,
-                                            f"graphql_requests_after_zoom_{i}",
+                                        self._save_session_to_db(
+                                            reqs_zoom, f"after_zoom_{i}"
                                         )
                             except Exception:
                                 print(f"[zoom {i}/{times}] step failed (ignored)")
@@ -373,36 +387,123 @@ class SessionsManager:
 
             print("crawler strategy initialized...")
 
-    def _dump_response_to_json(self, data, session_id, label):
-        """
-        Persist the provided data into a JSON file under the local `data` directory.
-
-        Arguments:
-        - data: The Python object to serialize. Non-serializable objects are coerced to strings.
-        - session_id: Identifier included in the filename for traceability. If falsy, a timestamp is used.
-        - label: Logical label for the content (e.g., "response_headers", "network_requests").
-        """
+    def extract_payload_from_crawl_data(self, requests_data):
+        """Extrait payload et variables depuis les données du crawl"""
         try:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            data_dir = os.path.join(base_dir, "data")
-            os.makedirs(data_dir, exist_ok=True)
+            for req_data in requests_data:
+                body = req_data.get("body")
+                if body:
+                    # Si body est une string URL-encoded
+                    if isinstance(body, str):
+                        from urllib.parse import parse_qsl
 
-            safe_session_id = str(session_id) if session_id else str(int(time.time()))
-            file_name = f"{label}_{safe_session_id}.json"
-            file_path = os.path.join(data_dir, file_name)
+                        parsed = dict(parse_qsl(body))
 
-            payload = {
-                "session_id": session_id,
-                "label": label,
-                "data": data,
+                        if "variables" in parsed:
+                            variables = json.loads(parsed["variables"])
+
+                            # Construire payload complet
+                            payload = {
+                                "doc_id": parsed.get("doc_id", "29956693457255409"),
+                                "fb_api_req_friendly_name": parsed.get(
+                                    "fb_api_req_friendly_name",
+                                    "CometMarketplaceRealEstateMapStoryQuery",
+                                ),
+                                "variables": parsed["variables"],
+                            }
+
+                            # Ajouter autres champs si présents
+                            for key, value in parsed.items():
+                                if key not in payload:
+                                    payload[key] = value
+
+                            print(
+                                f"[payload] Payload extrait depuis crawl: doc_id={payload.get('doc_id', 'N/A')}"
+                            )
+                            return payload, variables
+
+            # Fallback vers payload de base si rien trouvé
+            print("[payload] Aucun payload trouvé dans crawl, utilisation du fallback")
+            base_variables = {
+                "buyLocation": {"latitude": 45.50889, "longitude": -73.63167},
+                "categoryIDArray": [1468271819871448],
+                "numericVerticalFields": [],
+                "numericVerticalFieldsBetween": [],
+                "priceRange": [0, 214748364700],
+                "radius": 7000,
+                "stringVerticalFields": [],
             }
 
-            with open(file_path, "w", encoding="utf-8") as fp:
-                json.dump(payload, fp, ensure_ascii=False, indent=2, default=str)
+            base_payload = {
+                "doc_id": "29956693457255409",
+                "fb_api_req_friendly_name": "CometMarketplaceRealEstateMapStoryQuery",
+                "variables": json.dumps(base_variables),
+            }
 
-            print(f"Wrote JSON to: {file_path}")
+            return base_payload, base_variables
+
+        except Exception as e:
+            print(f"[payload] Erreur extraction: {e}")
+            return {}, {}
+
+    def _save_session_to_db(self, requests_data, step_label):
+        """
+        Sauvegarde les données de session dans la base de données.
+
+        Arguments:
+        - requests_data: Les données des requêtes GraphQL capturées
+        - step_label: Le label de l'étape (initial_load, after_modal, after_zoom_1, etc.)
+        """
+        try:
+            if not requests_data:
+                return
+
+            # Extraire headers et payload depuis les données du crawl
+            first_request = requests_data[0] if requests_data else {}
+            headers = first_request.get("headers", {})
+
+            # Extraire payload et variables depuis les vraies requêtes capturées
+            payload, variables = self.extract_payload_from_crawl_data(requests_data)
+
+            print(
+                f"[DB] Payload extrait pour {step_label}: doc_id={payload.get('doc_id', 'N/A')}"
+            )
+
+            # Créer session avec les vraies données
+            session_data = FacebookSession(
+                user_id=self.user_id,
+                cookies={},
+                headers=headers,
+                user_agent=headers.get("user-agent", ""),
+                payload=payload,
+                variables=variables,
+                doc_id=payload.get("doc_id", "29956693457255409"),
+                x_fb_lsd=headers.get("x-fb-lsd", ""),
+                active=True,
+            )
+
+            # Vérifier si une session existe déjà
+            existing_session = self.fb_session_model.get_session(self.user_id)
+
+            if existing_session:
+                # Mettre à jour la session existante
+                updates = {
+                    "headers": headers,
+                    "user_agent": headers.get("user-agent", ""),
+                    "x_fb_lsd": headers.get("x-fb-lsd", ""),
+                    "payload": payload,
+                    "variables": variables,
+                    "last_used": time.time(),
+                }
+                self.fb_session_model.update_session(self.user_id, updates)
+                print(f"[DB] Session mise à jour pour {step_label}")
+            else:
+                # Créer une nouvelle session
+                session_id = self.fb_session_model.save_session(session_data)
+                print(f"[DB] Nouvelle session créée: {session_id} pour {step_label}")
+
         except Exception as exc:
-            print(f"Failed to write JSON to data directory: {exc}")
+            print(f"[DB] Erreur lors de la sauvegarde: {exc}")
             return
 
     async def crawlai_get_req(

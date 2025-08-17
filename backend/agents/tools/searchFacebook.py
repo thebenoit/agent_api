@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 from seleniumwire import webdriver  # Import from seleniumwire
 import sys
+from models.fb_sessions import FacebookSessionModel
 
 # from setuptools._distutils import version as _version
 # sys.modules['distutils.version'] = _version
@@ -359,9 +360,11 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return data_dict
 
-    def init_session(self):
+    def init_session(self,user_id):
         print("init_session")
 
+        # fb_session_model = FacebookSessionModel()
+        # session_data = fb_session_model.get(user_id)
         headers, payload_to_send, resp_body = self.get_har_entry()
 
         # si le headers n'est pas trouvé

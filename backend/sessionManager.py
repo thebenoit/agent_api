@@ -27,6 +27,11 @@ from schemas.fb_session import FacebookSession
 
 
 class SessionsManager:
+    """
+    Gestionnaire de session pour facebook marketplace
+    créer une session pour un utilisateur
+    """
+
     def __init__(self):
 
         self.driver = os.getenv("DRIVER_PATH")
@@ -34,12 +39,6 @@ class SessionsManager:
         self.fb_session_model = FacebookSessionModel()
 
         self.mongo = MongoClient(os.getenv("MONGO_URI"))
-        # self.fb_sessions = self.db["fb_sessions"]
-
-        # self.proxies = {
-        #     "http": os.getenv("PROXIES_URL"),
-        #     "https": os.getenv("PROXIES_URL"),
-        # }
 
         self.proxies = ProxyConfig.from_env()  # ProxyConfig.from_env()
         # eg: export PROXIES="ip1:port1:username1:password1,ip2:port2:username2:password2"
@@ -59,26 +58,11 @@ class SessionsManager:
             )
             return
 
-        proxy_options = {}
+    def generate_user_agent(self):
 
-        self.chrome_options = uc.ChromeOptions()
-        self.chrome_options.add_argument("--ignore-ssl-errors=yes")
-        self.chrome_options.add_argument("--ignore-certificate-errors")
+        from services.ua_generator import generate_single_user_agent
 
-        service = Service(self.driver)
-
-        # seleniumwire options
-        self.sw_options = {"enable_har": True, "proxy": self.proxies}
-
-        # self.driver = uc.Chrome(
-        #     service=service,
-        #     options=chrome_options,
-        #     seleniumwire_options=sw_options
-        # )
-
-    def get_session_info(self, url):
-        self.driver.get(url)
-        time.sleep(15)
+        return generate_single_user_agent()
 
     @staticmethod
     def extract_request_headers_from_result(result):
@@ -127,23 +111,33 @@ class SessionsManager:
 
     async def init_undetected_crawler(
         self,
+        user_id: str = None,
         url="https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.50889&longitude=-73.63167&radius=7&locale=fr_CA",
     ):
         try:
 
-            undetected_adapter = UndetectedAdapter()
+            if url is None:
+                coords = self.generate_user_specific_coordinates(user_id)
+                url = f"https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude={coords['latitude']}&longitude={coords['longitude']}&radius=7&locale=fr_CA"
+                print(
+                    f"[User {user_id[:8]}] URL générée avec coordonnées personnalisées"
+                )
 
+            browser_headers = self.generate_user_agent()
+            user_agent = browser_headers["User-Agent"]
+
+            undetected_adapter = UndetectedAdapter()
             self.proxy_strategy = RoundRobinProxyStrategy(self.proxies)
 
             browser_config = BrowserConfig(
                 headless=True,
                 verbose=True,
-                # proxy=f"http://{os.getenv("PROXIES_URL")}",
-                # proxy_config=self.proxy_config,
+                user_agent=user_agent,
                 extra_args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
                     "--no-sandbox",
+                    f"--user-agent={user_agent}",
                 ],
             )
 
@@ -505,119 +499,30 @@ class SessionsManager:
         except Exception as exc:
             print(f"[DB] Erreur lors de la sauvegarde: {exc}")
             return
-
-    async def crawlai_get_req(
-        self,
-        url="https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.50889&longitude=-73.63167&radius=7&locale=fr_CA",
-    ):
-
-        async with AsyncWebCrawler() as crawler:
-            config1 = CrawlerRunConfig(
-                wait_for="css.login-modal",
-                js_only=True,
-                headless=False,
-                js_code="""
-                 document.querySelector('.login-modal .close-button').click();
-                """,
-                proxies=self.proxies,
-            )
-            # Introduce a random delay between 1 and 3 seconds
-            delay = random.uniform(1, 3)
-            await asyncio.sleep(delay)
-            await crawler.arun(url, config=config1)
-
-    def get_first_req(
-        self,
-        url="https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.50889&longitude=-73.63167&radius=7&locale=fr_CA",
-    ):
+    
+    async def create_session_for_user(self,user_id: str,force_refresh: bool = False) -> bool:
+        """
+        API pour créer ou mettre a jour une session
+        """
         try:
-            self.driver.get(url)
-            # allow the page to load fully including any JavaScript that triggers API requests
-            time.sleep(15)
-
-            # get first request through selenium to get the headers and first results
-            for request in self.driver.requests:
-                try:
-                    # if request is a response
-                    if request.response:
-                        # if request is a graphql request
-                        if "graphql" in request.url:
-                            print("graphql request found")
-                            try:
-                                # decode the response body
-                                resp_body = decode(
-                                    request.response.body,
-                                    request.response.headers.get(
-                                        "Content-Encoding", "identity"
-                                    ),
-                                )
-                                # convert the response body to a json object
-                                resp_body = json.loads(resp_body)
-
-                                # if the response body contains the data we want
-                                if (
-                                    "marketplace_rentals_map_view_stories"
-                                    in resp_body["data"]["viewer"]
-                                ):
-                                    print("marketplace_rentals_map_view_stories found")
-
-                                    try:
-                                        # Write all the data to a single structured file
-                                        facebook_data = {
-                                            "request_headers": dict(
-                                                request.headers.__dict__["_headers"]
-                                            ),
-                                            "request_body": str(request.body),
-                                            "response_body": resp_body,
-                                        }
-
-                                        with open(
-                                            "facebook_graphql_data.json",
-                                            "w",
-                                            encoding="utf-8",
-                                        ) as f:
-                                            json.dump(
-                                                facebook_data,
-                                                f,
-                                                indent=2,
-                                                ensure_ascii=False,
-                                            )
-
-                                        print(
-                                            "Structured data written to: facebook_graphql_data.json"
-                                        )
-                                        self.driver.quit()
-                                        # return the headers, body, and response body
-                                        return (
-                                            request.headers.__dict__["_headers"],
-                                            request.body,
-                                            resp_body,
-                                        )
-                                    except (IOError, OSError) as e:
-                                        print(f"Error writing to file: {e}")
-                                        # Return data even if file writing fails
-
-                                        return (
-                                            request.headers.__dict__["_headers"],
-                                            request.body,
-                                            resp_body,
-                                        )
-                            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                                print(f"Error decoding response body: {e}")
-                                continue
-                            except (KeyError, TypeError) as e:
-                                print(f"Error accessing response data structure: {e}")
-                                continue
-                except Exception as e:
-                    print(f"Error processing request: {e}")
-                    continue
-
-            print("No matching request found")
-            return None
-
+            if not force_refresh:
+                existing_session = self.fb_session_model.get_session(user_id)
+                if existing_session:
+                   return True
+        
+        print(f"[user {user_id[:8]}] Création de session...")
+        success = await self.init_undetected_crawler(user_id)
+        
+        if success:
+            print(f"[user {user_id[:8]}] Session créée avec succès")
+            return True
+        else:
+            print(f"[user {user_id[:8]}] Erreur lors de la création de la session")
+            return False
+        
         except Exception as e:
-            print(f"Error during driver navigation or request processing: {e}")
-            return None
+            print(f"[user {user_id[:8]}] Erreur lors de la création/mise à jour de la session: {e}")
+            return False
 
     def put_session_on_db():
         headers, body, resp_body = self.get_first_req()

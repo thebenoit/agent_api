@@ -23,7 +23,24 @@ async def test_undetected_crawler():
     await session_manager.init_undetected_crawler(
         "https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.50889&longitude=-73.63167&radius=7&locale=fr_CA"
     )
+    
+async def test_multiple_users():
+    session_manager = SessionsManager()
+    
+    user_ids = [
+        "66bd41ade6e37be2ef4b4fc2",
+        "66bd5b9fdcd4af9a94dcf0d1", 
+        "66bdaf9fe9323c652408aed3",
+        "66c7b62e7cd43356cfcd27d1",
+        "66ca004528030b150449d7c8"
+    ]
+    for user_id in user_ids:
+        print(f"\n=== Création session pour {user_id} ===")
+        success = await session_manager.create_session_for_user(user_id)
+        print(f"Résultat: {'✅ Succès' if success else '❌ Échec'}")
+
+    
 
 
 if __name__ == "__main__":
-    asyncio.run(test_undetected_crawler())
+    asyncio.run(test_multiple_users())

@@ -59,10 +59,41 @@ class SessionsManager:
             return
 
     def generate_user_agent(self):
+        """
+        Génère un User-Agent cohérent pour un utilisateur.
+        Si user_id est fourni, utilise un seed pour la reproductibilité.
+        """
+        from services.ua_generator import generate_complete_headers
+        import hashlib
 
-        from services.ua_generator import generate_single_user_agent
+        if user_id:
+            # Seed reproductible basé sur l'user_id
+            seed = int(hashlib.md5(user_id.encode()).hexdigest()[:8], 16)
+            return generate_complete_headers(seed=seed)
+        else:
+            # Headers aléatoires pour compatibilité avec code existant
+            return generate_complete_headers()
 
-        return generate_single_user_agent()
+    def generate_user_specific_coordinates(
+        self, user_id: str, base_lat: float = 45.50889, base_lon: float = -73.63167
+    ):
+        """
+        Génère des coordonnées légèrement variées pour chaque utilisateur.
+        """
+        import hashlib
+
+        # Seed basé sur l'user_id pour reproductibilité
+        user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:8], 16)
+
+        # Variation de ±0.002 degré (environ 200m)
+        lat_variation = ((user_hash % 2000) / 1000000) - 0.001
+        lon_variation = (((user_hash // 2000) % 2000) / 1000000) - 0.001
+
+        return {
+            "latitude": base_lat + lat_variation,
+            "longitude": base_lon + lon_variation,
+        }
+        pass
 
     @staticmethod
     def extract_request_headers_from_result(result):
@@ -194,7 +225,7 @@ class SessionsManager:
                     await asyncio.sleep(10)
                     reqs = self.extract_request_headers_from_result(result)
                     if reqs:
-                        self._save_session_to_db(reqs, "initial_load")
+                        self._save_session_to_db(reqs, "initial_load", user_id)
                     else:
                         print("[crawl] No GraphQL requests found on initial load")
 
@@ -258,7 +289,9 @@ class SessionsManager:
                                 modal_result
                             )
                             if reqs_after:
-                                self._save_session_to_db(reqs_after, "after_modal")
+                                self._save_session_to_db(
+                                    reqs_after, "after_modal", user_id
+                                )
                     except Exception:
                         print("[modal] step failed (ignored)")
 
@@ -331,7 +364,7 @@ class SessionsManager:
                                     )
                                     if reqs_zoom:
                                         self._save_session_to_db(
-                                            reqs_zoom, f"after_zoom_{i}"
+                                            reqs_zoom, f"after_zoom_{i}", user_id
                                         )
                             except Exception:
                                 print(f"[zoom {i}/{times}] step failed (ignored)")
@@ -440,7 +473,7 @@ class SessionsManager:
             print(f"[payload] Erreur extraction: {e}")
             return {}, {}
 
-    def _save_session_to_db(self, requests_data, step_label):
+    def _save_session_to_db(self, requests_data, step_label, user_id: str):
         """
         Sauvegarde les données de session dans la base de données.
 
@@ -465,7 +498,7 @@ class SessionsManager:
 
             # Créer session avec les vraies données
             session_data = FacebookSession(
-                user_id=self.user_id,
+                user_id=user_id,
                 cookies={},
                 headers=headers,
                 user_agent=headers.get("user-agent", ""),
@@ -477,7 +510,7 @@ class SessionsManager:
             )
 
             # Vérifier si une session existe déjà
-            existing_session = self.fb_session_model.get_session(self.user_id)
+            existing_session = self.fb_session_model.get_session(user_id)
 
             if existing_session:
                 # Mettre à jour la session existante
@@ -489,7 +522,7 @@ class SessionsManager:
                     "variables": variables,
                     "last_used": time.time(),
                 }
-                self.fb_session_model.update_session(self.user_id, updates)
+                self.fb_session_model.update_session(user_id, updates)
                 print(f"[DB] Session mise à jour pour {step_label}")
             else:
                 # Créer une nouvelle session
@@ -499,8 +532,10 @@ class SessionsManager:
         except Exception as exc:
             print(f"[DB] Erreur lors de la sauvegarde: {exc}")
             return
-    
-    async def create_session_for_user(self,user_id: str,force_refresh: bool = False) -> bool:
+
+    async def create_session_for_user(
+        self, user_id: str, force_refresh: bool = False
+    ) -> bool:
         """
         API pour créer ou mettre a jour une session
         """
@@ -508,20 +543,22 @@ class SessionsManager:
             if not force_refresh:
                 existing_session = self.fb_session_model.get_session(user_id)
                 if existing_session:
-                   return True
-        
-        print(f"[user {user_id[:8]}] Création de session...")
-        success = await self.init_undetected_crawler(user_id)
-        
-        if success:
-            print(f"[user {user_id[:8]}] Session créée avec succès")
-            return True
-        else:
-            print(f"[user {user_id[:8]}] Erreur lors de la création de la session")
-            return False
-        
+                    return True
+
+            print(f"[user {user_id[:8]}] Création de session...")
+            success = await self.init_undetected_crawler(user_id)
+
+            if success:
+                print(f"[user {user_id[:8]}] Session créée avec succès")
+                return True
+            else:
+                print(f"[user {user_id[:8]}] Erreur lors de la création de la session")
+                return False
+
         except Exception as e:
-            print(f"[user {user_id[:8]}] Erreur lors de la création/mise à jour de la session: {e}")
+            print(
+                f"[user {user_id[:8]}] Erreur lors de la création/mise à jour de la session: {e}"
+            )
             return False
 
     def put_session_on_db():

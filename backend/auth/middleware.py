@@ -23,14 +23,13 @@ async def auth_middleware(request: Request, call_next):
     logger.info(f"=== DÉBUT MIDDLEWARE AUTH ===")
     logger.info(f"URL: {request.url}")
     logger.info(f"Méthode: {request.method}")
-    logger.info(f"Headers: {dict(request.headers)}")
-    logger.info(f"Cookies: {request.cookies}")
 
     if request.method == "OPTIONS":
         logger.info("Requête OPTIONS détectée - passage direct au middleware suivant")
         return await call_next(request)
 
     try:
+        #configurer le secret key
         secret_key = os.getenv("SECRET_KEY")
         logger.info(f"SECRET_KEY configurée: {'Oui' if secret_key else 'Non'}")
 
@@ -49,7 +48,7 @@ async def auth_middleware(request: Request, call_next):
         auth_header = request.headers.get("Authorization")
         session_cookie = request.cookies.get("session_id")
 
-        logger.info(f"Header Authorization: {auth_header}")
+        logger.info(f"Header Authorization: {auth_header[:8]}...")
         logger.info(
             f"Cookie session_id: {session_cookie[:20] if session_cookie else 'Non trouvé'}..."
         )
@@ -95,7 +94,7 @@ async def auth_middleware(request: Request, call_next):
             decoded = jwt.decode(token, secret_key, algorithms=["HS256"])
             logger.info(f"Token décodé avec succès: {decoded}")
 
-            # Changement de user_id vers userId pour correspondre au frontend
+            
             user_id = decoded.get("userId")
             logger.info(f"userId extrait du token: {user_id}")
             logger.info(f"Type de userId: {type(user_id)}")

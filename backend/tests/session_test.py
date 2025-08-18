@@ -28,17 +28,17 @@ async def test_multiple_users():
     session_manager = SessionsManager()
     
     user_ids = [
-        "66bd41ade6e37be2ef4b4fc2",
-        "66bd5b9fdcd4af9a94dcf0d1", 
-        "66bdaf9fe9323c652408aed3",
-        "66c7b62e7cd43356cfcd27d1",
-        "66ca004528030b150449d7c8"
-        "66d8682198f8caa20e6eda4e",
-        "66ee43924d5a2df7dc1aeee4",
-        "66f9a467ff6ca2377c0bd1e5",
-        "66fdd8560ee12414146cfba0",
-        "66feada73bb163ba70411f27",
-        "6700aefdbc85baf45b7d5a93"
+        "66bd41ade6e37be2ef4b4fc2"
+        # "66bd5b9fdcd4af9a94dcf0d1", 
+        # "66bdaf9fe9323c652408aed3",
+        # "66c7b62e7cd43356cfcd27d1",
+        # "66ca004528030b150449d7c8"
+        # "66d8682198f8caa20e6eda4e",
+        # "66ee43924d5a2df7dc1aeee4",
+        # "66f9a467ff6ca2377c0bd1e5",
+        # "66fdd8560ee12414146cfba0",
+        # "66feada73bb163ba70411f27",
+        # "6700aefdbc85baf45b7d5a93"
     ]
     for user_id in user_ids:
         print(f"\n=== Création session pour {user_id} ===")

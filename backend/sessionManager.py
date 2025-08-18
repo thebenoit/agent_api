@@ -67,8 +67,9 @@ class SessionsManager:
         import hashlib
 
         if user_id:
+            rnd_seed = random.randint(8, 16)
             # Seed reproductible basé sur l'user_id
-            hash_part = int(hashlib.md5(user_id.encode()).hexdigest()[:16], 16)
+            hash_part = int(hashlib.md5(user_id.encode()).hexdigest()[12], 16)
             time_part = int(time.time() * 1000) % 1000000
             seed = hash_part + time_part
             return generate_complete_headers(seed=seed)
@@ -85,7 +86,7 @@ class SessionsManager:
         import hashlib
 
         # Seed basé sur l'user_id pour reproductibilité
-        user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:16], 16)
+        user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:12], 16)
 
         # Variation de ±0.002 degré (environ 200m)
         lat_variation = ((user_hash % 2000) / 1000000) - 0.001
@@ -120,13 +121,24 @@ class SessionsManager:
         def get_req_body(req):
             # Extraire le body/payload de la requête
             if isinstance(req, dict):
-                return (
+                body = (
                     req.get("request_body")
                     or req.get("body")
                     or (req.get("request") or {}).get("body")
+                    or req.get("post_data")
                 )
-            return getattr(req, "request_body", None) or getattr(req, "body", None)
+            else:
+                body = getattr(req, "request_body", None) or getattr(req, "body", None) or getattr(req, "post_data", None)
 
+            if hasattr(req, '__dict__'):
+                print(f"[DEBUG] Objet req contient: {list(req.__dict__.keys())}")
+            return body
+        
+            # Debug pour voir le contenu
+            print(f"[DEBUG] URL GraphQL: {u}")
+            print(f"[DEBUG] Body trouvé: {body is not None}, Type: {type(body)}")
+            if body:
+                print(f"[DEBUG] Body contenu: {body[:200]}...")
         for req in result.network_requests:
             u = req.get("url") if isinstance(req, dict) else getattr(req, "url", None)
             if isinstance(u, str) and "graphql" in u.lower():
@@ -152,28 +164,29 @@ class SessionsManager:
 
             if url is None:
                 coords = self.generate_user_specific_coordinates(user_id)
-                url="https://www.facebook.com/marketplace/montreal/propertyrentals"
-                #url = f"https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude={coords['latitude']}&longitude={coords['longitude']}&radius=7&locale=fr_CA"
+                url="https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.5044&longitude=-73.5761&radius=67&locale=fr_CA"
+                #url = f"https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude={coords['latitude']}&longitude={coords['longitude']}&radius=15&locale=fr_CA"
                 print(
                     f"[User {user_id[:8]}] URL générée avec coordonnées personnalisées"
                 )
 
-            browser_headers = self.generate_user_agent(user_id)
-            print("browser_headers: ", browser_headers,"\n")
-            user_agent = browser_headers["User-Agent"]
+            # browser_headers = self.generate_user_agent(user_id)
+            # print("browser_headers: ", browser_headers,"\n")
+            #user_agent = browser_headers["User-Agent"]
 
             undetected_adapter = UndetectedAdapter()
             self.proxy_strategy = RoundRobinProxyStrategy(self.proxies)
 
             browser_config = BrowserConfig(
-                headless=True,
+                headless=False,
                 verbose=True,
-                user_agent=user_agent,
+               #user_agent=user_agent,
+                user_agent_mode="random",
                 extra_args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
-                    "--no-sandbox",
-                    f"--user-agent={user_agent}",
+                    "--no-sandbox"
+                    #f"--user-agent={user_agent}",
                 ],
             )
 
@@ -231,7 +244,7 @@ class SessionsManager:
                     await asyncio.sleep(rnd_sleep)
                     reqs = self.extract_request_headers_from_result(result)
                     if reqs:
-                        # self._save_session_to_db(reqs, "initial_load", user_id)
+                        self._save_session_to_db(reqs, "initial_load", user_id)
                         print("[crawl] GraphQL requests found on initial load:")
                     else:
                         print("[crawl] No GraphQL requests found on initial load")
@@ -296,10 +309,10 @@ class SessionsManager:
                             reqs_after = self.extract_request_headers_from_result(
                                 modal_result
                             )
-                            # if reqs_after:
-                            #     self._save_session_to_db(
-                            #         reqs_after, "after_modal", user_id
-                            #     )
+                            if reqs_after:
+                                self._save_session_to_db(
+                                    reqs_after, "after_modal", user_id
+                                )
                     except Exception:
                         print("[modal] step failed (ignored)")
 

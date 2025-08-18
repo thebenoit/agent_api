@@ -36,7 +36,7 @@ yarn-error.log*
 next-env.d.ts
 
 ai
-
+the_env
 
 __pycache__/
 *.py[cod]

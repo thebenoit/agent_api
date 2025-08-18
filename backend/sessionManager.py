@@ -58,7 +58,7 @@ class SessionsManager:
             )
             return
 
-    def generate_user_agent(self):
+    def generate_user_agent(self, user_id: str):
         """
         Génère un User-Agent cohérent pour un utilisateur.
         Si user_id est fourni, utilise un seed pour la reproductibilité.
@@ -68,7 +68,9 @@ class SessionsManager:
 
         if user_id:
             # Seed reproductible basé sur l'user_id
-            seed = int(hashlib.md5(user_id.encode()).hexdigest()[:8], 16)
+            hash_part = int(hashlib.md5(user_id.encode()).hexdigest()[:16], 16)
+            time_part = int(time.time() * 1000) % 1000000
+            seed = hash_part + time_part
             return generate_complete_headers(seed=seed)
         else:
             # Headers aléatoires pour compatibilité avec code existant
@@ -83,7 +85,7 @@ class SessionsManager:
         import hashlib
 
         # Seed basé sur l'user_id pour reproductibilité
-        user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:8], 16)
+        user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:16], 16)
 
         # Variation de ±0.002 degré (environ 200m)
         lat_variation = ((user_hash % 2000) / 1000000) - 0.001
@@ -99,6 +101,7 @@ class SessionsManager:
     def extract_request_headers_from_result(result):
         graphql_data = []
         if not result or not getattr(result, "network_requests", None):
+            print("return req headers results: ")
             return graphql_data
 
         def get_req_headers(req):
@@ -143,18 +146,20 @@ class SessionsManager:
     async def init_undetected_crawler(
         self,
         user_id: str = None,
-        url="https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.50889&longitude=-73.63167&radius=7&locale=fr_CA",
+        url=None,
     ):
         try:
 
             if url is None:
                 coords = self.generate_user_specific_coordinates(user_id)
-                url = f"https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude={coords['latitude']}&longitude={coords['longitude']}&radius=7&locale=fr_CA"
+                url="https://www.facebook.com/marketplace/montreal/propertyrentals"
+                #url = f"https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude={coords['latitude']}&longitude={coords['longitude']}&radius=7&locale=fr_CA"
                 print(
                     f"[User {user_id[:8]}] URL générée avec coordonnées personnalisées"
                 )
 
-            browser_headers = self.generate_user_agent()
+            browser_headers = self.generate_user_agent(user_id)
+            print("browser_headers: ", browser_headers,"\n")
             user_agent = browser_headers["User-Agent"]
 
             undetected_adapter = UndetectedAdapter()
@@ -222,12 +227,15 @@ class SessionsManager:
                     print(
                         "[crawl] waiting ~10s for page to fully settle before actions..."
                     )
-                    await asyncio.sleep(10)
+                    rnd_sleep = random.randint(7, 20)
+                    await asyncio.sleep(rnd_sleep)
                     reqs = self.extract_request_headers_from_result(result)
                     if reqs:
-                        self._save_session_to_db(reqs, "initial_load", user_id)
+                        # self._save_session_to_db(reqs, "initial_load", user_id)
+                        print("[crawl] GraphQL requests found on initial load:")
                     else:
                         print("[crawl] No GraphQL requests found on initial load")
+                        #return None
 
                     # Try to close the login modal (X/labels/Escape)
                     print("[modal] attempting to close modal (X/labels/Escape)...")
@@ -288,10 +296,10 @@ class SessionsManager:
                             reqs_after = self.extract_request_headers_from_result(
                                 modal_result
                             )
-                            if reqs_after:
-                                self._save_session_to_db(
-                                    reqs_after, "after_modal", user_id
-                                )
+                            # if reqs_after:
+                            #     self._save_session_to_db(
+                            #         reqs_after, "after_modal", user_id
+                            #     )
                     except Exception:
                         print("[modal] step failed (ignored)")
 
@@ -368,55 +376,23 @@ class SessionsManager:
                                         )
                             except Exception:
                                 print(f"[zoom {i}/{times}] step failed (ignored)")
-
-                    await perform_zoom_in(times=3, delay_ms=1000)
+                    rnd_delay = random.randint(1000, 3000)
+                    await perform_zoom_in(times=3, delay_ms=rnd_delay)
+                    return result
 
                 else:
                     print("Crawler failed to load the page: ", result.error_message)
+                    return None
 
-                # Final pass on initial load result for specific GraphQL endpoint
-                if result and getattr(result, "network_requests", None):
-                    try:
-                        graphql_requests = []
-                        for req in result.network_requests:
-                            url_value = None
-                            if isinstance(req, dict):
-                                url_value = req.get("url")
-                            else:
-                                url_value = getattr(req, "url", None)
-                            if (
-                                isinstance(url_value, str)
-                                and "graphql" in url_value.lower()
-                                and "marketplace_rentals_map_view_stories"
-                                in url_value.lower()
-                            ):
-                                graphql_requests.append(req)
-                        if graphql_requests:
-                            self._dump_response_to_json(
-                                graphql_requests,
-                                result.session_id,
-                                "network_requests_graphql",
-                            )
-                        else:
-                            print(
-                                "[crawl] No GraphQL network requests found in final filter"
-                            )
-                    except Exception:
-                        print(
-                            "[crawl] Failed to filter GraphQL network requests; skipping write"
-                        )
-                else:
-                    print("[crawl] No network requests found")
 
         except Exception as e:
             print("Error initializing crawler strategy:", e)
             return None
 
-            print("crawler strategy initialized...")
-
     def extract_payload_from_crawl_data(self, requests_data):
         """Extrait payload et variables depuis les données du crawl"""
         try:
+            print("extract_payload_from_crawl_data: ")
             for req_data in requests_data:
                 body = req_data.get("body")
                 if body:
@@ -448,26 +424,28 @@ class SessionsManager:
                                 f"[payload] Payload extrait depuis crawl: doc_id={payload.get('doc_id', 'N/A')}"
                             )
                             return payload, variables
+                    else:
+                         print(f"[DEBUG] ❌ Body vide ou None")
 
             # Fallback vers payload de base si rien trouvé
-            print("[payload] Aucun payload trouvé dans crawl, utilisation du fallback")
-            base_variables = {
-                "buyLocation": {"latitude": 45.50889, "longitude": -73.63167},
-                "categoryIDArray": [1468271819871448],
-                "numericVerticalFields": [],
-                "numericVerticalFieldsBetween": [],
-                "priceRange": [0, 214748364700],
-                "radius": 7000,
-                "stringVerticalFields": [],
-            }
+            print("[payload] Aucun payload trouvé dans crawl, retourne rien")
+            # base_variables = {
+            #     "buyLocation": {"latitude": 45.50889, "longitude": -73.63167},
+            #     "categoryIDArray": [1468271819871448],
+            #     "numericVerticalFields": [],
+            #     "numericVerticalFieldsBetween": [],
+            #     "priceRange": [0, 214748364700],
+            #     "radius": 7000,
+            #     "stringVerticalFields": [],
+            # }
 
-            base_payload = {
-                "doc_id": "29956693457255409",
-                "fb_api_req_friendly_name": "CometMarketplaceRealEstateMapStoryQuery",
-                "variables": json.dumps(base_variables),
-            }
+            # base_payload = {
+            #     "doc_id": "29956693457255409",
+            #     "fb_api_req_friendly_name": "CometMarketplaceRealEstateMapStoryQuery",
+            #     "variables": json.dumps(base_variables),
+            # }
 
-            return base_payload, base_variables
+            return {}, {}
 
         except Exception as e:
             print(f"[payload] Erreur extraction: {e}")
@@ -491,6 +469,7 @@ class SessionsManager:
 
             # Extraire payload et variables depuis les vraies requêtes capturées
             payload, variables = self.extract_payload_from_crawl_data(requests_data)
+            print(f"[DEBUG] 🧪 Résultat: payload={payload is not None}, variables={variables is not None}")
 
             print(
                 f"[DB] Payload extrait pour {step_label}: doc_id={payload.get('doc_id', 'N/A')}"
@@ -549,7 +528,7 @@ class SessionsManager:
             success = await self.init_undetected_crawler(user_id)
 
             if success:
-                print(f"[user {user_id[:8]}] Session créée avec succès")
+                print(f"[user {user_id[:8]}] Session contient quelque chose")
                 return True
             else:
                 print(f"[user {user_id[:8]}] Erreur lors de la création de la session")

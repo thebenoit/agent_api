@@ -33,7 +33,6 @@ class SessionsManager:
     """
 
     def __init__(self):
-
         self.driver = os.getenv("DRIVER_PATH")
         self.user_id = "66bd41ade6e37be2ef4b4fc2"  # User ID fixe
         self.fb_session_model = FacebookSessionModel()
@@ -58,6 +57,58 @@ class SessionsManager:
             )
             return
 
+        # Charger les villes depuis le fichier JSON
+        self.cities = self._load_cities()
+
+    def _load_cities(self):
+        """Charge les villes depuis le fichier cities.json"""
+        try:
+            cities_path = os.path.join(os.path.dirname(__file__), "data", "cities.json")
+            with open(cities_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get("cities", [])
+        except Exception as e:
+            print(f"Erreur lors du chargement des villes: {e}")
+            # Fallback vers Montreal si erreur
+            return [{
+                "name": "Montreal",
+                "country": "Canada",
+                "locale": "fr_CA",
+                "latitude": 45.5044,
+                "longitude": -73.5761,
+                "region": "Quebec"
+            }]
+
+    def _select_city_for_user(self, user_id: str):
+        """Sélectionne une ville de manière déterministe basée sur l'user_id"""
+        if not self.cities:
+            return None
+        
+        # Utiliser l'user_id comme seed pour la sélection déterministe
+        import hashlib
+        user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:8], 16)
+        city_index = user_hash % len(self.cities)
+        
+        selected_city = self.cities[city_index]
+        print(f"[City] Ville sélectionnée pour {user_id[:8]}: {selected_city['name']}, {selected_city['country']}")
+        return selected_city
+
+    def _generate_facebook_marketplace_url(self, city_data):
+        """Génère l'URL Facebook Marketplace pour une ville donnée"""
+        base_url = "https://www.facebook.com/marketplace"
+        
+        radius = random.randint(10, 100)
+        
+        # Construire l'URL avec le format standard
+        url = f"{base_url}/{city_data['name'].lower()}/propertyrentals"
+        url += f"?exact=false"
+        url += f"&latitude={city_data['latitude']}"
+        url += f"&longitude={city_data['longitude']}"
+        url += f"&radius={radius}"
+        url += f"&locale={city_data['locale']}"
+        
+        return url
+
     def generate_user_agent(self, user_id: str):
         """
         Génère un User-Agent cohérent pour un utilisateur.
@@ -78,12 +129,21 @@ class SessionsManager:
             return generate_complete_headers()
 
     def generate_user_specific_coordinates(
-        self, user_id: str, base_lat: float = 45.50889, base_lon: float = -73.63167
+        self, user_id: str
     ):
         """
-        Génère des coordonnées légèrement variées pour chaque utilisateur.
+        Génère des coordonnées légèrement variées pour chaque utilisateur
+        basées sur la ville sélectionnée pour cet utilisateur.
         """
         import hashlib
+
+        # Sélectionner la ville pour cet utilisateur
+        city_data = self._select_city_for_user(user_id)
+        if not city_data:
+            # Fallback vers Montreal si pas de ville trouvée
+            base_lat, base_lon = 45.50889, -73.63167
+        else:
+            base_lat, base_lon = city_data['latitude'], city_data['longitude']
 
         # Seed basé sur l'user_id pour reproductibilité
         user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:12], 16)
@@ -96,7 +156,6 @@ class SessionsManager:
             "latitude": base_lat + lat_variation,
             "longitude": base_lon + lon_variation,
         }
-        pass
 
     @staticmethod
     def extract_request_headers_from_result(result):
@@ -164,8 +223,8 @@ class SessionsManager:
 
             if url is None:
                 coords = self.generate_user_specific_coordinates(user_id)
-                url="https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude=45.5044&longitude=-73.5761&radius=67&locale=fr_CA"
-                #url = f"https://www.facebook.com/marketplace/montreal/propertyrentals?exact=false&latitude={coords['latitude']}&longitude={coords['longitude']}&radius=15&locale=fr_CA"
+                city_data = self._select_city_for_user(user_id)
+                url = self._generate_facebook_marketplace_url(city_data)
                 print(
                     f"[User {user_id[:8]}] URL générée avec coordonnées personnalisées"
                 )

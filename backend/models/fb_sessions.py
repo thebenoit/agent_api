@@ -37,12 +37,14 @@ class FacebookSessionModel:
             {"user_id": user_id, "active": True}, {"$set": {"active": False}}
         )
         return result.modified_count > 0
-    
-    def init_fb_session(self,user_id):
+
+    def init_fb_session(self, user_id):
         session = self.get_session(user_id)
-        
+       
+
         if session:
-           return session.headers, session.payload, session.variables
-        
+            return session["headers"], session["payload"], session["variables"]
+
         else:
+            print("no session found")
             return None, None, None

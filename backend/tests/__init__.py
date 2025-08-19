@@ -4,4 +4,5 @@ from .test import test_user_text_chat
 
 __all__ = ["test_get_req_info", 
            "test_search_facebook_async", 
-           "test_user_text_chat"]
+           "test_user_text_chat",
+           "graphql_test"]

@@ -64,49 +64,55 @@ class SessionsManager:
         """Charge les villes depuis le fichier cities.json"""
         try:
             cities_path = os.path.join(os.path.dirname(__file__), "data", "cities.json")
-            with open(cities_path, 'r', encoding='utf-8') as f:
+            with open(cities_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return data.get("cities", [])
         except Exception as e:
             print(f"Erreur lors du chargement des villes: {e}")
             # Fallback vers Montreal si erreur
-            return [{
-                "name": "Montreal",
-                "country": "Canada",
-                "locale": "fr_CA",
-                "latitude": 45.5044,
-                "longitude": -73.5761,
-                "region": "Quebec"
-            }]
+            return [
+                {
+                    "name": "Montreal",
+                    "country": "Canada",
+                    "locale": "fr_CA",
+                    "latitude": 45.5044,
+                    "longitude": -73.5761,
+                    "region": "Quebec",
+                }
+            ]
 
     def _select_city_for_user(self, user_id: str):
         """Sélectionne une ville de manière déterministe basée sur l'user_id"""
         if not self.cities:
             return None
-        
+
         # Utiliser l'user_id comme seed pour la sélection déterministe
         import hashlib
+
         user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:8], 16)
         city_index = user_hash % len(self.cities)
-        
+
         selected_city = self.cities[city_index]
-        print(f"[City] Ville sélectionnée pour {user_id[:8]}: {selected_city['name']}, {selected_city['country']}")
+        print(
+            f"[City] Ville sélectionnée pour {user_id[:8]}: {selected_city['name']}, {selected_city['country']}"
+        )
         return selected_city
 
     def _generate_facebook_marketplace_url(self, city_data):
         """Génère l'URL Facebook Marketplace pour une ville donnée"""
         base_url = "https://www.facebook.com/marketplace"
-        
+
         radius = random.randint(10, 100)
-        
+
         # Construire l'URL avec le format standard
         url = f"{base_url}/{city_data['name'].lower()}/propertyrentals"
         url += f"?exact=false"
         url += f"&latitude={city_data['latitude']}"
         url += f"&longitude={city_data['longitude']}"
         url += f"&radius={radius}"
-        url += f"&locale={city_data['locale']}"
-        
+        # url += f"&locale={city_data['locale']}"
+        url += f"&locale=fr_CA"
+
         return url
 
     def generate_user_agent(self, user_id: str):
@@ -128,9 +134,7 @@ class SessionsManager:
             # Headers aléatoires pour compatibilité avec code existant
             return generate_complete_headers()
 
-    def generate_user_specific_coordinates(
-        self, user_id: str
-    ):
+    def generate_user_specific_coordinates(self, user_id: str):
         """
         Génère des coordonnées légèrement variées pour chaque utilisateur
         basées sur la ville sélectionnée pour cet utilisateur.
@@ -143,7 +147,7 @@ class SessionsManager:
             # Fallback vers Montreal si pas de ville trouvée
             base_lat, base_lon = 45.50889, -73.63167
         else:
-            base_lat, base_lon = city_data['latitude'], city_data['longitude']
+            base_lat, base_lon = city_data["latitude"], city_data["longitude"]
 
         # Seed basé sur l'user_id pour reproductibilité
         user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:12], 16)
@@ -178,7 +182,6 @@ class SessionsManager:
             return getattr(request_obj, "headers", None) if request_obj else None
 
         def get_req_body(req):
-            # Extraire le body/payload de la requête
             if isinstance(req, dict):
                 body = (
                     req.get("request_body")
@@ -187,17 +190,18 @@ class SessionsManager:
                     or req.get("post_data")
                 )
             else:
-                body = getattr(req, "request_body", None) or getattr(req, "body", None) or getattr(req, "post_data", None)
-
-            if hasattr(req, '__dict__'):
-                print(f"[DEBUG] Objet req contient: {list(req.__dict__.keys())}")
+                body = (
+                    getattr(req, "request_body", None)
+                    or getattr(req, "body", None)
+                    or getattr(req, "post_data", None)
+                )
+            if isinstance(body, (bytes, bytearray)):
+                try:
+                    body = body.decode("utf-8", errors="ignore")
+                except Exception:
+                    body = None
             return body
-        
-            # Debug pour voir le contenu
-            print(f"[DEBUG] URL GraphQL: {u}")
-            print(f"[DEBUG] Body trouvé: {body is not None}, Type: {type(body)}")
-            if body:
-                print(f"[DEBUG] Body contenu: {body[:200]}...")
+
         for req in result.network_requests:
             u = req.get("url") if isinstance(req, dict) else getattr(req, "url", None)
             if isinstance(u, str) and "graphql" in u.lower():
@@ -231,21 +235,21 @@ class SessionsManager:
 
             # browser_headers = self.generate_user_agent(user_id)
             # print("browser_headers: ", browser_headers,"\n")
-            #user_agent = browser_headers["User-Agent"]
+            # user_agent = browser_headers["User-Agent"]
 
             undetected_adapter = UndetectedAdapter()
             self.proxy_strategy = RoundRobinProxyStrategy(self.proxies)
 
             browser_config = BrowserConfig(
-                headless=True,
+                headless=False,
                 verbose=True,
-               #user_agent=user_agent,
+                # user_agent=user_agent,
                 user_agent_mode="random",
                 extra_args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
-                    "--no-sandbox"
-                    #f"--user-agent={user_agent}",
+                    "--no-sandbox",
+                    # f"--user-agent={user_agent}",
                 ],
             )
 
@@ -307,7 +311,7 @@ class SessionsManager:
                         print("[crawl] GraphQL requests found on initial load:")
                     else:
                         print("[crawl] No GraphQL requests found on initial load")
-                        #return None
+                        # return None
 
                     # Try to close the login modal (X/labels/Escape)
                     print("[modal] attempting to close modal (X/labels/Escape)...")
@@ -448,6 +452,7 @@ class SessionsManager:
                                         )
                             except Exception:
                                 print(f"[zoom {i}/{times}] step failed (ignored)")
+
                     rnd_delay = random.randint(1000, 3000)
                     await perform_zoom_in(times=3, delay_ms=rnd_delay)
                     return result
@@ -456,133 +461,113 @@ class SessionsManager:
                     print("Crawler failed to load the page: ", result.error_message)
                     return None
 
-
         except Exception as e:
             print("Error initializing crawler strategy:", e)
             return None
 
     def extract_payload_from_crawl_data(self, requests_data):
-        """Extrait payload et variables depuis les données du crawl"""
         try:
-            print("extract_payload_from_crawl_data: ")
             for req_data in requests_data:
                 body = req_data.get("body")
-                if body:
-                    # Si body est une string URL-encoded
-                    if isinstance(body, str):
-                        from urllib.parse import parse_qsl
+                # 1) Normaliser en str
+                if isinstance(body, (bytes, bytearray)):
+                    try:
+                        body = body.decode("utf-8", errors="ignore")
+                    except Exception:
+                        continue
+                if not isinstance(body, str) or not body:
+                    continue
 
-                        parsed = dict(parse_qsl(body))
+                from urllib.parse import parse_qsl
 
-                        if "variables" in parsed:
-                            variables = json.loads(parsed["variables"])
+                parsed = dict(parse_qsl(body))
 
-                            # Construire payload complet
-                            payload = {
-                                "doc_id": parsed.get("doc_id", "29956693457255409"),
-                                "fb_api_req_friendly_name": parsed.get(
-                                    "fb_api_req_friendly_name",
-                                    "CometMarketplaceRealEstateMapStoryQuery",
-                                ),
-                                "variables": parsed["variables"],
-                            }
+                # Besoin au minimum de variables + doc_id
+                if "variables" not in parsed:
+                    continue
 
-                            # Ajouter autres champs si présents
-                            for key, value in parsed.items():
-                                if key not in payload:
-                                    payload[key] = value
+                # variables doit être JSON valide (string JSON)
+                try:
+                    variables = json.loads(parsed["variables"])
+                except Exception:
+                    # parfois double-encodé -> unquote puis json.loads
+                    from urllib.parse import unquote
 
-                            print(
-                                f"[payload] Payload extrait depuis crawl: doc_id={payload.get('doc_id', 'N/A')}"
-                            )
-                            return payload, variables
-                    else:
-                         print(f"[DEBUG] ❌ Body vide ou None")
+                    try:
+                        variables = json.loads(unquote(parsed["variables"]))
+                        parsed["variables"] = unquote(parsed["variables"])
+                    except Exception:
+                        continue
 
-            # Fallback vers payload de base si rien trouvé
-            print("[payload] Aucun payload trouvé dans crawl, retourne rien")
-            # base_variables = {
-            #     "buyLocation": {"latitude": 45.50889, "longitude": -73.63167},
-            #     "categoryIDArray": [1468271819871448],
-            #     "numericVerticalFields": [],
-            #     "numericVerticalFieldsBetween": [],
-            #     "priceRange": [0, 214748364700],
-            #     "radius": 7000,
-            #     "stringVerticalFields": [],
-            # }
+                # doc_id présent ? (sinon on skip, on NE met PAS un faux default)
+                if "doc_id" not in parsed:
+                    continue
 
-            # base_payload = {
-            #     "doc_id": "29956693457255409",
-            #     "fb_api_req_friendly_name": "CometMarketplaceRealEstateMapStoryQuery",
-            #     "variables": json.dumps(base_variables),
-            # }
+                # Construire le payload EXACT de cette requête
+                payload = {
+                    "doc_id": parsed["doc_id"],
+                    # s'il manque fb_api_req_friendly_name dans le body,
+                    # on le prend du header x-fb-friendly-name si dispo
+                    "fb_api_req_friendly_name": parsed.get("fb_api_req_friendly_name")
+                    or req_data.get("headers", {}).get("x-fb-friendly-name", ""),
+                    "variables": parsed["variables"],  # JSON string, pas re-encodée
+                }
+                # Conserver les autres clés body utiles
+                for k, v in parsed.items():
+                    if k not in payload:
+                        payload[k] = v
 
-            return {}, {}
+                headers = req_data.get("headers", {})
+                return {"headers": headers, "payload": payload, "variables": variables}
 
+            # Rien de bon trouvé
+            return None
         except Exception as e:
             print(f"[payload] Erreur extraction: {e}")
-            return {}, {}
+            return None
 
     def _save_session_to_db(self, requests_data, step_label, user_id: str):
-        """
-        Sauvegarde les données de session dans la base de données.
-
-        Arguments:
-        - requests_data: Les données des requêtes GraphQL capturées
-        - step_label: Le label de l'étape (initial_load, after_modal, after_zoom_1, etc.)
-        """
         try:
             if not requests_data:
                 return
+            extracted = self.extract_payload_from_crawl_data(requests_data)
+            if not extracted:
+                print("[DB] Aucun payload exploitable")
+                return
 
-            # Extraire headers et payload depuis les données du crawl
-            first_request = requests_data[0] if requests_data else {}
-            headers = first_request.get("headers", {})
+            headers = extracted["headers"] or {}
+            payload = extracted["payload"] or {}
+            variables = extracted["variables"] or {}
 
-            # Extraire payload et variables depuis les vraies requêtes capturées
-            payload, variables = self.extract_payload_from_crawl_data(requests_data)
-            print(f"[DEBUG] 🧪 Résultat: payload={payload is not None}, variables={variables is not None}")
-
-            print(
-                f"[DB] Payload extrait pour {step_label}: doc_id={payload.get('doc_id', 'N/A')}"
-            )
-
-            # Créer session avec les vraies données
             session_data = FacebookSession(
                 user_id=user_id,
-                cookies={},
+                cookies={},  # tu peux aussi récupérer les cookies si crawl4ai les expose
                 headers=headers,
                 user_agent=headers.get("user-agent", ""),
                 payload=payload,
                 variables=variables,
-                doc_id=payload.get("doc_id", "29956693457255409"),
+                doc_id=payload.get("doc_id", ""),
                 x_fb_lsd=headers.get("x-fb-lsd", ""),
                 active=True,
             )
 
-            # Vérifier si une session existe déjà
             existing_session = self.fb_session_model.get_session(user_id)
-
             if existing_session:
-                # Mettre à jour la session existante
                 updates = {
                     "headers": headers,
                     "user_agent": headers.get("user-agent", ""),
-                    "x_fb_lsd": headers.get("x-fb-lsd", ""),
+                    "x_f_b_lsd": headers.get(
+                        "x-fb-lsd", ""
+                    ),  # garde la même clé si tu en as une
                     "payload": payload,
                     "variables": variables,
                     "last_used": time.time(),
                 }
                 self.fb_session_model.update_session(user_id, updates)
-                print(f"[DB] Session mise à jour pour {step_label}")
             else:
-                # Créer une nouvelle session
-                session_id = self.fb_session_model.save_session(session_data)
-                print(f"[DB] Nouvelle session créée: {session_id} pour {step_label}")
-
+                self.fb_session_model.save_session(session_data)
         except Exception as exc:
             print(f"[DB] Erreur lors de la sauvegarde: {exc}")
-            return
 
     async def create_session_for_user(
         self, user_id: str, force_refresh: bool = False

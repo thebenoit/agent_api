@@ -33,6 +33,7 @@ import random
 import urllib
 import urllib.parse
 from time import sleep
+import httpx
 
 load_dotenv()
 
@@ -101,7 +102,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         print("les options de sessions sont chargées")
 
-        self.init_session()
+        # self.init_session()
 
         # #close the driver
         # self.driver.close()
@@ -314,6 +315,50 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return filtered_har
 
+    def load_fb_headers(self, headers, session):
+        # dict: simple
+        if isinstance(headers, dict):
+            session.headers.update(headers)
+
+        # liste: [(k, v)] ou [{"name": k, "value": v}]
+        elif isinstance(headers, list):
+            for h in headers:
+                if isinstance(h, (list, tuple)) and len(h) == 2:
+                    k, v = h
+                    session.headers[k] = v
+                elif isinstance(h, dict) and "name" in h:
+                    session.headers[h["name"]] = h.get("value", "")
+
+        else:
+            raise TypeError("headers doit être un dict ou une liste")
+
+        # override si besoin
+        session.headers.update(
+            {"x-fb-friendly-name": "CometMarketplaceRealEstateMapStoryQuery"}
+        )
+
+        # 🆕 Log des headers chargés pour debug
+        print(f"[Headers] Headers chargés: {len(session.headers)} headers")
+        if "cookie" in session.headers:
+            cookie_header = session.headers["cookie"]
+            cookie_count = len(cookie_header.split(";"))
+            print(f"[Headers] Cookies dans session: {cookie_count} cookies")
+
+            # 🆕 Vérifier la qualité des cookies
+            important_cookies = ["c_user", "xs", "fr", "datr", "sb"]
+            found_important = [
+                name for name in important_cookies if name in cookie_header
+            ]
+
+            if found_important:
+                print(f"[Headers] ✅ Cookies importants trouvés: {found_important}")
+            else:
+                print("[Headers] ⚠️ Aucun cookie important trouvé dans la session")
+        else:
+            print("[Headers] ⚠️ Aucun cookie trouvé dans les headers de session")
+
+        return session
+
     def load_headers(self, headers):
         # Cette méthode charge les en-têtes HTTP dans la session
 
@@ -327,8 +372,6 @@ class SearchFacebook(BaseTool, BaseScraper):
         self.session.headers.update(
             {"x-fb-friendly-name": "CometMarketplaceRealEstateMapStoryQuery"}
         )
-
-    # def fetch_graphql_call(query_url_fragments="/api/graphql/",timeout=10000):
 
     def get_next_cursor(self, body):
         try:
@@ -351,57 +394,79 @@ class SearchFacebook(BaseTool, BaseScraper):
             return None
 
     def parse_payload(self, payload):
+        # Vérifier si payload est déjà un dictionnaire
+        if isinstance(payload, dict):
+            return payload
 
-        # Decode the data string
-        # decoded_str = urllib.parse.unquote(payload.decode())
+        # Si c'est une chaîne, la parser
+        if isinstance(payload, str):
+            # Decode the data string if it's bytes
+            if isinstance(payload, bytes):
+                payload = payload.decode("utf-8")
 
-        # Parse the string into a dictionary
-        data_dict = dict(urllib.parse.parse_qsl(payload))
+            # Parse the string into a dictionary
+            data_dict = dict(urllib.parse.parse_qsl(payload))
+            return data_dict
 
-        return data_dict
+        # Si c'est un autre type, essayer de le convertir en dict
+        try:
+            return dict(payload)
+        except (TypeError, ValueError):
+            print(f"Warning: Impossible de parser le payload de type {type(payload)}")
+            return {}
 
-    def init_session(self,user_id):
+    def init_session(self, user_id, session):
         print("init_session")
 
         # fb_session_model = FacebookSessionModel()
         # session_data = fb_session_model.get(user_id)
-        headers, payload_to_send, resp_body = self.get_har_entry()
+        headers, payload, resp_body = FacebookSessionModel().init_fb_session(user_id)
 
         # si le headers n'est pas trouvé
         if headers is None:
-            print("no headers found in har file")
+            print("no headers found in doc")
             try:
-                print("on récupère le har file")
-                # on récupère le har file
-                self.har = self.get_har()
-                # on récupère les headers, payload et resp_body
-                headers, payload_to_send, resp_body = self.get_har_entry()
+                print("on récupère le headers")
+
+                return None, None, None
 
             except Exception as e:
                 print(
                     f"Erreur lors de l'obtention de la première requête : {e} header: {headers}"
                 )
 
-        self.next_cursor = self.get_next_cursor(resp_body)
+        # 🆕 Vérifier et afficher les cookies avant chargement
+        if "cookie" in headers:
+            cookie_header = headers["cookie"]
+            cookie_count = len(cookie_header.split(";"))
+            print(f"[Cookies] Cookies trouvés dans la session: {cookie_count}")
 
-        # self.listings.append(resp_body)
+            # Afficher les noms des cookies importants
+            important_cookies = ["c_user", "xs", "fr", "datr", "sb", "wd"]
+            found_cookies = []
+            for cookie_name in important_cookies:
+                if cookie_name in cookie_header:
+                    found_cookies.append(cookie_name)
 
-        # load headers to requests Sesssion
-        self.load_headers(headers)
+            if found_cookies:
+                print(f"[Cookies] Cookies importants trouvés: {found_cookies}")
+            else:
+                print("[Cookies] ⚠️ Aucun cookie important trouvé !")
+        else:
+            print("[Cookies] ⚠️ Aucun cookie trouvé dans les headers !")
+
+        self.load_fb_headers(headers, session)
 
         # parse payload to normal format
-        self.payload_to_send = self.parse_payload(payload_to_send)
+        payload = self.parse_payload(payload)
 
         # update the api name we're using (map api)
-        self.payload_to_send["doc_id"] = "29956693457255409"
-        self.payload_to_send["fb_api_req_friendly_name"] = (
-            "CometMarketplaceRealEstateMapStoryQuery"
-        )
+        payload["doc_id"] = "29956693457255409"
+        payload["fb_api_req_friendly_name"] = "CometMarketplaceRealEstateMapStoryQuery"
 
-        self.variables = json.loads(self.payload_to_send["variables"])
-        # self.variables = {"buyLocation":{"latitude":45.4722,"longitude":-73.5848},"categoryIDArray":[1468271819871448],"numericVerticalFields":[],"numericVerticalFieldsBetween":[],"priceRange":[0,214748364700],"radius":2000,"stringVerticalFields":[]}
+        variables = json.loads(payload["variables"])
 
-        # self.driver.close()
+        return headers, payload, variables
 
     def add_listings(self, body):
         print("cherche les listings...")
@@ -690,16 +755,135 @@ class SearchFacebook(BaseTool, BaseScraper):
         except Exception as e:
             return None
 
-    def scrape(self, lat, lon, query):
+    async def fb_graphql_call(self, user_id: str):
+        print("Initialisation de fb_graphql_call...")
+
+        for attempt in range(self.max_retries):
+            try:
+                # Créer une nouvelle session pour chaque tentative
+                session = requests.Session()
+
+                proxies = {
+                    "http": os.getenv("PROXIES_URL"),
+                    "https": os.getenv("PROXIES_URL"),
+                }
+                session.proxies.update(proxies)
+                print("proxies updated... done")
+                session.verify = False
+
+                # Initialiser la session Facebook
+                headers, payload, variables = self.init_session(user_id, session)
+
+               
+
+                if headers is None or payload is None:
+                    print(
+                        f"Session non initialisée pour user {user_id}, tentative {attempt + 1}"
+                    )
+                    if attempt < self.max_retries - 1:
+                        sleep_time = self.retry_delay * (attempt + 1) + random.uniform(
+                            1, 5
+                        )
+                        print(f"Nouvelle tentative dans {sleep_time} secondes...")
+                        time.sleep(sleep_time)
+                        continue
+                    else:
+                        raise RuntimeError(
+                            "Impossible d'initialiser la session Facebook"
+                        )
+
+                # Faire la requête POST initiale
+                resp_body = session.post(
+                    "https://www.facebook.com/api/graphql/",
+                    data=urllib.parse.urlencode(payload),
+                )
+                print("Apres first request")
+
+                # Vérifier que la réponse contient les bonnes données avec boucle while
+                try:
+                    retry_count = 0
+                    max_inner_retries = 3
+
+                    while (
+                        "marketplace_rentals_map_view_stories"
+                        not in resp_body.json().get("data", {}).get("viewer", {})
+                        and retry_count < max_inner_retries
+                    ):
+                        print(
+                            f"Pas le bon type de données, tentative interne {retry_count + 1}/{max_inner_retries}"
+                        )
+
+                        # Réessayer la requête
+                        resp_body = session.post(
+                            "https://www.facebook.com/api/graphql/",
+                            data=urllib.parse.urlencode(payload),
+                        )
+                        retry_count += 1
+
+                        # Petit délai entre les tentatives internes
+                        time.sleep(2)
+
+                    # Vérifier si on a finalement obtenu les bonnes données
+                    if (
+                        "marketplace_rentals_map_view_stories"
+                        not in resp_body.json().get("data", {}).get("viewer", {})
+                    ):
+                        print(
+                            "Impossible d'obtenir les données valides après toutes les tentatives internes"
+                        )
+                        raise RuntimeError(
+                            "Données invalides après tentatives internes"
+                        )
+
+                    print("Données GraphQL récupérées avec succès")
+                    return resp_body.json()
+
+                except Exception as e:
+                    print(f"Erreur lors de la vérification des données: {e}")
+                    raise
+
+            except KeyError as e:
+                logger.error(f"Clé manquante dans la session pour user {user_id}: {e}")
+                if attempt < self.max_retries - 1:
+                    sleep_time = self.retry_delay * (attempt + 1) + random.uniform(1, 5)
+                    print(f"Nouvelle tentative dans {sleep_time} secondes...")
+                    time.sleep(sleep_time)
+                else:
+                    raise RuntimeError(f"Invalid session data: missing key {e}")
+
+            except Exception as e:
+                print(f"Erreur lors de la tentative {attempt + 1}: {e}")
+                if attempt < self.max_retries - 1:
+                    sleep_time = self.retry_delay * (attempt + 1) + random.uniform(1, 5)
+                    print(f"Nouvelle tentative dans {sleep_time} secondes...")
+                    time.sleep(sleep_time)
+                else:
+                    print("Nombre maximum de tentatives atteint")
+                    raise RuntimeError(f"Unexpected error during GraphQL call: {e}")
+
+            # Délai entre les tentatives principales
+            if attempt < self.max_retries - 1:
+                print("Attente 5 secondes avant la prochaine tentative...")
+                time.sleep(5)
+
+        # Si on arrive ici, toutes les tentatives ont échoué
+        raise RuntimeError("Toutes les tentatives de fb_graphql_call ont échoué")
+
+    def scrape(self, lat, lon, query, user_id):
         print("Initialisation de la methode Scrape...")
+
         for attempt in range(self.max_retries):
             # Méthode pour scraper les données à une position géographique donnée
             try:
+                headers, payload, variables = self.init_fb_session(user_id)
+
+                session = self.load_fb_headers(headers, session)
+
                 # Met à jour les coordonnées de recherche dans les variables
-                self.variables["buyLocation"]["latitude"] = lat
-                self.variables["buyLocation"]["longitude"] = lon
-                self.variables["priceRange"] = [query["minBudget"], query["maxBudget"]]
-                self.variables["numericVerticalFieldsBetween"] = [
+                variables["buyLocation"]["latitude"] = lat
+                variables["buyLocation"]["longitude"] = lon
+                variables["priceRange"] = [query["minBudget"], query["maxBudget"]]
+                variables["numericVerticalFieldsBetween"] = [
                     {
                         "max": query["maxBedrooms"],  # ex: 3
                         "min": query["minBedrooms"],  # ex: 1

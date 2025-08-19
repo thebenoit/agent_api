@@ -360,7 +360,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return data_dict
 
-    def init_session(self,user_id):
+    def init_session(self):
         print("init_session")
 
         # fb_session_model = FacebookSessionModel()
@@ -381,7 +381,9 @@ class SearchFacebook(BaseTool, BaseScraper):
                 print(
                     f"Erreur lors de l'obtention de la première requête : {e} header: {headers}"
                 )
-
+        print("headers: ", headers, "\n")
+        print("payload_to_send: ", payload_to_send, "\n")
+        print("resp_body: ", resp_body, "\n")
         self.next_cursor = self.get_next_cursor(resp_body)
 
         # self.listings.append(resp_body)

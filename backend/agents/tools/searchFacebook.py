@@ -332,9 +332,31 @@ class SearchFacebook(BaseTool, BaseScraper):
         else:
             raise TypeError("headers doit être un dict ou une liste")
 
+        additional_headers = {
+            "x-fb-lsd": headers.get("x-fb-lsd", ""),  # Token de sécurité
+            "x-asbd-id": headers.get("x-asbd-id", "359341"),  # ID app Facebook
+            "sec-ch-prefers-color-scheme": "light",
+            "sec-ch-ua": '"Chromium";v="135", "Not_A Brand";v="8", "Google Chrome";v="135"',
+            "sec-ch-ua-full-version-list": '"Not.A/Brand";v="99.0.0.0", "Chromium";v="136.0.7103.25"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-model": '""',
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-ch-ua-platform-version": '"10.0"',
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate, br",
+            "accept-language": "fr-FR,fr;q=0.9,en;q=0.8",
+            "cache-control": "no-cache",
+            "pragma": "no-cache",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "te": "trailers",
+        }
+
         # override si besoin
         session.headers.update(
-            {"x-fb-friendly-name": "CometMarketplaceRealEstateMapStoryQuery"}
+            additional_headers
+            # {"x-fb-friendly-name": "CometMarketplaceRealEstateMapStoryQuery"}
         )
 
         # 🆕 Log des headers chargés pour debug
@@ -435,36 +457,20 @@ class SearchFacebook(BaseTool, BaseScraper):
                     f"Erreur lors de l'obtention de la première requête : {e} header: {headers}"
                 )
 
-        # 🆕 Vérifier et afficher les cookies avant chargement
-        if "cookie" in headers:
-            cookie_header = headers["cookie"]
-            cookie_count = len(cookie_header.split(";"))
-            print(f"[Cookies] Cookies trouvés dans la session: {cookie_count}")
-
-            # Afficher les noms des cookies importants
-            important_cookies = ["c_user", "xs", "fr", "datr", "sb", "wd"]
-            found_cookies = []
-            for cookie_name in important_cookies:
-                if cookie_name in cookie_header:
-                    found_cookies.append(cookie_name)
-
-            if found_cookies:
-                print(f"[Cookies] Cookies importants trouvés: {found_cookies}")
-            else:
-                print("[Cookies] ⚠️ Aucun cookie important trouvé !")
-        else:
-            print("[Cookies] ⚠️ Aucun cookie trouvé dans les headers !")
-
         self.load_fb_headers(headers, session)
 
         # parse payload to normal format
         payload = self.parse_payload(payload)
 
         # update the api name we're using (map api)
-        payload["doc_id"] = "29956693457255409"
-        payload["fb_api_req_friendly_name"] = "CometMarketplaceRealEstateMapStoryQuery"
-
+        # payload["doc_id"] = "29956693457255409"
+        # payload["fb_api_req_friendly_name"] = "CometMarketplaceRealEstateMapStoryQuery"
+        if payload.get("fb_api_req_friendly_name"):
+            session.headers["x-fb-friendly-name"] = payload["fb_api_req_friendly_name"]
+        
         variables = json.loads(payload["variables"])
+        variables["radius"] = 50000
+        payload["variables"] = json.dumps(variables)
 
         return headers, payload, variables
 
@@ -774,8 +780,6 @@ class SearchFacebook(BaseTool, BaseScraper):
                 # Initialiser la session Facebook
                 headers, payload, variables = self.init_session(user_id, session)
 
-               
-
                 if headers is None or payload is None:
                     print(
                         f"Session non initialisée pour user {user_id}, tentative {attempt + 1}"
@@ -791,18 +795,22 @@ class SearchFacebook(BaseTool, BaseScraper):
                         raise RuntimeError(
                             "Impossible d'initialiser la session Facebook"
                         )
-
+                print("payload: ", payload, "\n")
                 # Faire la requête POST initiale
                 resp_body = session.post(
                     "https://www.facebook.com/api/graphql/",
                     data=urllib.parse.urlencode(payload),
                 )
                 print("Apres first request")
+                print(f"Status code: {resp_body.status_code}")
+                print(f"Headers de réponse: {dict(resp_body.headers)}")
+                print(f"Contenu de la réponse: {resp_body.text[:25000]}")
 
                 # Vérifier que la réponse contient les bonnes données avec boucle while
                 try:
                     retry_count = 0
                     max_inner_retries = 3
+                    print("resp_body: ", resp_body.json)
 
                     while (
                         "marketplace_rentals_map_view_stories"

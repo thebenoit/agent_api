@@ -307,7 +307,7 @@ class SessionsManager:
                     await asyncio.sleep(rnd_sleep)
                     reqs = self.extract_request_headers_from_result(result)
                     if reqs:
-                        self._save_session_to_db(reqs, "initial_load", user_id)
+                        # self._save_session_to_db(reqs, "initial_load", user_id)
                         print("[crawl] GraphQL requests found on initial load:")
                     else:
                         print("[crawl] No GraphQL requests found on initial load")
@@ -372,10 +372,10 @@ class SessionsManager:
                             reqs_after = self.extract_request_headers_from_result(
                                 modal_result
                             )
-                            if reqs_after:
-                                self._save_session_to_db(
-                                    reqs_after, "after_modal", user_id
-                                )
+                            # if reqs_after:
+                            # self._save_session_to_db(
+                            #     reqs_after, "after_modal", user_id
+                            # )
                     except Exception:
                         print("[modal] step failed (ignored)")
 

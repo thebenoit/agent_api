@@ -241,7 +241,7 @@ class SessionsManager:
             self.proxy_strategy = RoundRobinProxyStrategy(self.proxies)
 
             browser_config = BrowserConfig(
-                headless=False,
+                headless=True,
                 verbose=True,
                 # user_agent=user_agent,
                 user_agent_mode="random",

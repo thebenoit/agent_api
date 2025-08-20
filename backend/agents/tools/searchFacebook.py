@@ -67,46 +67,6 @@ class SearchFacebook(BaseTool, BaseScraper):
         self.listings = []
         self.seen_listing_ids = set()
 
-        proxies = {"http": os.getenv("PROXIES_URL"), "https": os.getenv("PROXIES_URL")}
-
-        proxy_options = {}
-
-        self.chrome_options = uc.ChromeOptions()
-
-        # ignore ssl errors
-        self.chrome_options.add_argument("--headless")
-        self.chrome_options.add_argument("--ignore-ssl-errors=yes")
-        self.chrome_options.add_argument("--ignore-certificate-errors")
-
-        print(f"Chrome options chargées")
-
-        service = Service(self.driver)
-
-        # seleniumwire options
-        sw_options = {"enable_har": True, "proxy": proxies}
-        # self.driver = uc.Chrome(
-        #     service=service,
-        #     options=chrome_options,
-        #     seleniumwire_options={"enable_har": True},
-        # )
-
-        # self.filtered_har = self.get_har()
-
-        # create a http session
-        self.session = (
-            requests.Session()
-        )  # Permet de réutiliser connexions, cookies et en-têtes entre plusieurs requêtes.
-        self.session.proxies.update(proxies)
-        # #ignore ssl errors
-        self.session.verify = False
-
-        print("les options de sessions sont chargées")
-
-        # self.init_session()
-
-        # #close the driver
-        # self.driver.close()
-
         self.max_retries = 3
         self.retry_delay = 10
 
@@ -118,6 +78,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         maxBudget: float,
         minBedrooms: int,
         maxBedrooms: int,
+        user_id: str,
     ) -> Any:
 
         self.listings = []
@@ -133,16 +94,12 @@ class SearchFacebook(BaseTool, BaseScraper):
         }
         print("inputs: ", inputs)
         # query = {"lat":"40.7128","lon":"-74.0060","bedrooms":2,"minBudget":80000,"maxBudget":100000,"bedrooms":3,"minBedrooms":3,"maxBedrooms":4}
-        listings = self.scrape(inputs["lat"], inputs["lon"], inputs)
-        if listings:
-            # Gérer le cas où marketplace_listing_title peut être une string ou un dict
-            title = listings[0]["for_sale_item"]["marketplace_listing_title"]
-            if isinstance(title, dict):
-                print("listings: ", title.get("text", title))
-            else:
-                print("listings: ", title)
-        else:
+        listings = asyncio.run(
+            self.scrape(inputs["lat"], inputs["lon"], inputs, user_id)
+        )
+        if not listings:
             print("Aucune annonce trouvée: ")
+            # print("listings: ", listings)
 
         return listings
 
@@ -154,6 +111,8 @@ class SearchFacebook(BaseTool, BaseScraper):
         maxBudget: float,
         minBedrooms: int,
         maxBedrooms: int,
+        user_id: str,
+        listings: list,
         *,
         top_k: int = 3,
         concurrency: int = 3,
@@ -175,7 +134,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         # Exécuter la collecte synchrone existante dans un thread
         def _run_sync():
             return self.execute(
-                lat, lon, minBudget, maxBudget, minBedrooms, maxBedrooms
+                lat, lon, minBudget, maxBudget, minBedrooms, maxBedrooms, user_id
             )
 
         listings = await asyncio.to_thread(_run_sync)
@@ -190,22 +149,44 @@ class SearchFacebook(BaseTool, BaseScraper):
         sem = asyncio.Semaphore(concurrency)
 
         async def enrich(item: dict) -> dict:
-            url = item.get("for_sale_item", {}).get("share_uri") or (
-                f"https://www.facebook.com/marketplace/item/{item.get('_id','')}"
-                if item.get("_id")
-                else None
-            )
+            # Gestion intelligente de l'URL selon le type de listing
+            url = None
+
+            # Pour les listings du feed
+            if item.get("listing_type") == "feed":
+                url = item.get("for_sale_item", {}).get("share_uri")
+                if not url:
+                    # Construire l'URL à partir de l'ID
+                    listing_id = item.get("_id")
+                    if listing_id:
+                        url = f"https://www.facebook.com/marketplace/item/{listing_id}/"
+            else:
+                # Pour les listings de la carte (ancienne structure)
+                url = item.get("for_sale_item", {}).get("share_uri") or (
+                    f"https://www.facebook.com/marketplace/item/{item.get('_id','')}"
+                    if item.get("_id")
+                    else None
+                )
+
             if not url:
                 item["onepage"] = {"error": True, "reason": "no url"}
                 logger.warning(
-                    "[enrich] aucun URL pour _id=%s title=%s",
+                    "[enrich] aucun URL pour _id=%s title=%s type=%s",
                     item.get("_id"),
-                    item.get("for_sale_item", {}).get("marketplace_listing_title"),
+                    item.get("for_sale_item", {}).get("marketplace_listing_title")
+                    or item.get("title"),
+                    item.get("listing_type", "unknown"),
                 )
                 return item
+
             try:
                 start = asyncio.get_event_loop().time()
-                logger.debug("[enrich] start _id=%s url=%s", item.get("_id"), url)
+                logger.debug(
+                    "[enrich] start _id=%s url=%s type=%s",
+                    item.get("_id"),
+                    url,
+                    item.get("listing_type", "unknown"),
+                )
                 async with sem:
                     data = await asyncio.wait_for(
                         onepage.fetch_page(url), timeout=timeout_sec
@@ -222,16 +203,21 @@ class SearchFacebook(BaseTool, BaseScraper):
                 images_count = len(item["details"].get("images", []))
                 desc_len = len(item["details"].get("description", "") or "")
                 logger.info(
-                    "[enrich] ok _id=%s in %.2fs images=%d desc_len=%d",
+                    "[enrich] ok _id=%s in %.2fs images=%d desc_len=%d type=%s",
                     item.get("_id"),
                     elapsed,
                     images_count,
                     desc_len,
+                    item.get("listing_type", "unknown"),
                 )
             except Exception as e:
                 item["onepage"] = {"error": True, "reason": str(e)}
                 logger.exception(
-                    "[enrich] erreur _id=%s url=%s: %s", item.get("_id"), url, e
+                    "[enrich] erreur _id=%s url=%s type=%s: %s",
+                    item.get("_id"),
+                    url,
+                    item.get("listing_type", "unknown"),
+                    e,
                 )
             return item
 
@@ -269,51 +255,6 @@ class SearchFacebook(BaseTool, BaseScraper):
             [n.get("id") for n in normalized],
         )
         return normalized
-
-    ##methode to get the har file from the driver
-    def get_har(self):
-        print("Lancement du driver")
-        self.driver.get(self.url)
-        time.sleep(15)
-        raw_har = self.driver.har
-        # si c'est une chaîne JSON, on la parse
-        if isinstance(raw_har, str):
-            self.har = json.loads(raw_har)
-        else:
-            self.har = raw_har
-
-        # Extract headers, payload, url and response body for graphql requests
-        filtered_har = {
-            "log": {
-                "entries": [
-                    {
-                        "request": {
-                            "url": entry["request"]["url"],
-                            "headers": entry["request"]["headers"],
-                            "method": entry["request"]["method"],
-                            "postData": entry["request"].get("postData", {}),
-                        },
-                        "response": {
-                            "content": entry["response"].get("content", {}),
-                            "headers": entry["response"].get("headers", []),
-                            "status": entry["response"].get("status"),
-                            "statusText": entry["response"].get("statusText"),
-                            "bodySize": entry["response"].get("bodySize"),
-                            "body": entry["response"].get("body", ""),
-                        },
-                    }
-                    for entry in self.har["log"]["entries"]
-                    if entry["request"].get("url")
-                    == "https://www.facebook.com/api/graphql/"
-                ]
-            }
-        }
-
-        # Write filtered HAR data to file
-        with open("data/facebook.har", "w") as f:
-            json.dump(filtered_har, f, indent=4)
-
-        return filtered_har
 
     def load_fb_headers(self, headers, session):
         # dict: simple
@@ -395,26 +336,6 @@ class SearchFacebook(BaseTool, BaseScraper):
             {"x-fb-friendly-name": "CometMarketplaceRealEstateMapStoryQuery"}
         )
 
-    def get_next_cursor(self, body):
-        try:
-            # On descend dans data.viewer.marketplace_feed_stories.page_info
-            page_info = body["data"]["viewer"]["marketplace_feed_stories"]["page_info"]
-            raw_cursor = page_info["end_cursor"]
-
-            # raw_cursor est une chaîne JSON encodée, on la parse si possible
-            try:
-                return json.loads(raw_cursor)
-            except json.JSONDecodeError:
-                # print(f"raw_cursor: {raw_cursor}")
-                # si ce n'est pas du JSON valide, on retourne la chaîne brute
-                return raw_cursor
-
-        except KeyError as e:
-            print(f"Erreur d'accès aux données : {e}")
-            # on peut logger body pour debug :
-            # print(json.dumps(body, indent=2))
-            return None
-
     def parse_payload(self, payload):
         # Vérifier si payload est déjà un dictionnaire
         if isinstance(payload, dict):
@@ -437,11 +358,19 @@ class SearchFacebook(BaseTool, BaseScraper):
             print(f"Warning: Impossible de parser le payload de type {type(payload)}")
             return {}
 
-    def init_session(self, user_id, session):
+    def init_session(
+        self, user_id, session, lat, lon, minBudget, maxBudget, minBedrooms, maxBedrooms
+    ):
         print("init_session")
 
-        # fb_session_model = FacebookSessionModel()
-        # session_data = fb_session_model.get(user_id)
+        print("user_id: ", user_id)
+        print("lat: ", lat)
+        print("lon: ", lon)
+        print("minBudget: ", minBudget)
+        print("maxBudget: ", maxBudget)
+        print("minBedrooms: ", minBedrooms)
+        print("maxBedrooms: ", maxBedrooms)
+
         headers, payload, resp_body = FacebookSessionModel().init_fb_session(user_id)
 
         # si le headers n'est pas trouvé
@@ -467,9 +396,19 @@ class SearchFacebook(BaseTool, BaseScraper):
         # payload["fb_api_req_friendly_name"] = "CometMarketplaceRealEstateMapStoryQuery"
         if payload.get("fb_api_req_friendly_name"):
             session.headers["x-fb-friendly-name"] = payload["fb_api_req_friendly_name"]
-        
+
         variables = json.loads(payload["variables"])
-        variables["radius"] = 50000
+        variables["radius"] = 4000
+        variables["buyLocation"]["latitude"] = lat
+        variables["buyLocation"]["longitude"] = lon
+        variables["priceRange"] = [minBudget, maxBudget]
+        variables["numericVerticalFieldsBetween"] = [
+            {
+                "max": maxBedrooms,  # ex: 3
+                "min": minBedrooms,  # ex: 1
+                "name": "bedrooms",
+            }
+        ]
         payload["variables"] = json.dumps(variables)
 
         return headers, payload, variables
@@ -572,6 +511,128 @@ class SearchFacebook(BaseTool, BaseScraper):
         except KeyError as e:
             print(f"Erreur de structure dans le body : {e}")
 
+    def add_feed_listings(self, body):
+        """
+        Traite les données du feed marketplace et extrait les informations importantes des listings.
+        Structure: data.viewer.marketplace_feed_stories.edges
+
+        Args:
+            body (dict): Corps de la réponse GraphQL contenant les listings du feed
+        """
+        print("🔍 Recherche des listings dans le feed marketplace...")
+
+        listings = []
+
+        try:
+            # Accéder aux edges du feed
+            edges = body["data"]["viewer"]["marketplace_feed_stories"]["edges"]
+            print(f"✅ Nombre d'edges trouvées: {len(edges)}")
+
+            for edge in edges:
+                node = edge["node"]
+
+                # Vérifier que c'est bien un listing
+                if (
+                    node.get("__typename") == "MarketplaceFeedListingStory"
+                    and node.get("story_type") == "LISTING"
+                    and "listing" in node
+                ):
+
+                    listing = node["listing"]
+                    listing_id = listing.get("id")
+
+                    # Vérification des doublons
+                    # if listing_id in self.seen_listing_ids:
+                    #     continue
+                    # self.seen_listing_ids.add(listing_id)
+
+                    print(f"📋 Traitement du listing: {listing_id}")
+
+                    # Extraction des informations essentielles
+                    title = listing.get("marketplace_listing_title", "")
+                    price_info = listing.get("listing_price", {})
+                    price_text = price_info.get("formatted_amount", "")
+                    price_numeric = price_info.get("amount", "")
+
+                    # Localisation
+                    location_info = listing.get("location", {}).get(
+                        "reverse_geocode", {}
+                    )
+                    city = location_info.get("city", "")
+                    state = location_info.get("state", "")
+
+                    # Chambres et salles de bain
+                    custom_title = listing.get("custom_title", "")
+                    bedrooms = self.clean_bedrooms(custom_title)
+                    bathrooms = self.clean_bathrooms(custom_title)
+
+                    # Image principale
+                    primary_photo = listing.get("primary_listing_photo", {})
+                    image_uri = ""
+                    if primary_photo and "image" in primary_photo:
+                        image_uri = primary_photo["image"].get("uri", "")
+
+                    # Sous-titres (adresse)
+                    subtitles = []
+                    custom_subtitles = listing.get(
+                        "custom_sub_titles_with_rendering_flags", []
+                    )
+                    for subtitle_obj in custom_subtitles:
+                        if "subtitle" in subtitle_obj:
+                            subtitles.append(subtitle_obj["subtitle"])
+
+                    # Construction de l'objet listing filtré
+                    filtered_data = {
+                        "_id": listing_id,
+                        "scraped_at": time.time(),
+                        "title": title,
+                        "price": {"formatted": price_text, "numeric": price_numeric},
+                        "bedrooms": bedrooms,
+                        "bathrooms": bathrooms,
+                        "location": {
+                            "city": city,
+                            "state": state,
+                            "full_address": (
+                                " - ".join(subtitles)
+                                if subtitles
+                                else f"{city}, {state}"
+                            ),
+                        },
+                        "primary_image": image_uri,
+                        "custom_title": custom_title,
+                        "listing_type": "feed",  # Pour distinguer du type map
+                        "for_sale_item": {
+                            "id": listing_id,
+                            "marketplace_listing_title": title,
+                            "formatted_price": price_info,
+                            "location": listing.get("location", {}),
+                            "custom_title": custom_title,
+                            "custom_sub_titles_with_rendering_flags": custom_subtitles,
+                            "listing_photos": [{"uri": image_uri}] if image_uri else [],
+                            "share_uri": f"https://www.facebook.com/marketplace/item/{listing_id}/",
+                        },
+                    }
+
+                    print("filtered_data: ", filtered_data)
+
+                    # Ajout à la liste des listings
+                    listings.append(filtered_data)
+                    print(f"✅ Listing ajouté: {title} - {price_text} - {city}")
+                    return listings
+
+                else:
+                    print(
+                        f"⚠️ Type de node non reconnu: {node.get('__typename')} - {node.get('story_type')}"
+                    )
+
+        except KeyError as e:
+            print(f"❌ Erreur de structure dans le body: {e}")
+            print(
+                f"Clés disponibles: {list(body.get('data', {}).get('viewer', {}).keys())}"
+            )
+        except Exception as e:
+            print(f"❌ Erreur lors du traitement des listings: {e}")
+
     def normalize_item(self, item: dict) -> dict:
         """Normalise une annonce brute en un objet simple et uniformisé.
 
@@ -582,17 +643,53 @@ class SearchFacebook(BaseTool, BaseScraper):
             for_sale = item.get("for_sale_item", {}) or {}
             details = item.get("details", {}) or {}
 
+            # Gestion intelligente du titre selon le type de listing
+            title = ""
+            if item.get("listing_type") == "feed":
+                # Pour les listings du feed, utiliser le titre direct
+                title = item.get("title", "") or for_sale.get(
+                    "marketplace_listing_title", ""
+                )
+            else:
+                # Pour les listings de la carte, utiliser la structure existante
+                title = for_sale.get("marketplace_listing_title", "") or item.get(
+                    "title", ""
+                )
+
+            # Gestion intelligente du prix selon le type de listing
+            price = ""
+            if item.get("listing_type") == "feed":
+                # Pour les listings du feed, utiliser la structure price.formatted
+                price_info = item.get("price", {})
+                if isinstance(price_info, dict):
+                    price = price_info.get("formatted", "")
+                else:
+                    price = str(price_info) if price_info else ""
+            else:
+                # Pour les listings de la carte, utiliser la structure existante
+                price = (for_sale.get("formatted_price", {}) or {}).get(
+                    "text"
+                ) or item.get("budget", "")
+
+            # Gestion intelligente de l'URL
+            url = for_sale.get("share_uri")
+            if not url and item.get("_id"):
+                # Construire l'URL si elle n'existe pas
+                url = f"https://www.facebook.com/marketplace/item/{item.get('_id')}/"
+
             normalized = {
                 "id": item.get("_id"),
-                "title": for_sale.get("marketplace_listing_title", "") or "",
-                "price": (for_sale.get("formatted_price", {}) or {}).get("text")
-                or item.get("budget"),
+                "title": title,
+                "price": price,
                 "bedrooms": item.get("bedrooms"),
                 "bathrooms": item.get("bathrooms"),
-                "url": for_sale.get("share_uri"),
+                "url": url,
                 "images": details.get("images", []) or [],
                 "description": details.get("description"),
                 "source": "facebook",
+                "listing_type": item.get(
+                    "listing_type", "unknown"
+                ),  # Ajouter le type pour debug
             }
             logger.debug("[normalize_item] %s", normalized)
             return normalized
@@ -608,6 +705,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                 "images": [],
                 "description": None,
                 "source": "facebook",
+                "listing_type": item.get("listing_type", "unknown"),
                 "error": str(e),
             }
 
@@ -734,34 +832,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return page_info
 
-    def initialize_driver(self):
-        print("Initialisation du navigateur Chrome")
-
-        """Initialise et retourne une nouvelle instance du navigateur Chrome"""
-        try:
-            chrome_options = uc.ChromeOptions()
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--ignore-ssl-errors=yes")
-            chrome_options.add_argument("--ignore-certificate-errors")
-
-            driver_path = os.getenv("DRIVER_PATH")
-            service = Service(driver_path)
-
-            return uc.Chrome(
-                service=service,
-                options=chrome_options,
-            )
-        except Exception as e:
-            print(f"Erreur lors de l'initialisation du navigateur Chrome: {e}")
-            return None
-
-    def get_realtorca_url(self, page_number):
-        try:
-            return f"https://www.realtor.ca/realtor-search-results#province=4&page={page_number}&sort=11-A"
-        except Exception as e:
-            return None
-
-    async def fb_graphql_call(self, user_id: str):
+    async def scrape(self, lat, lon, query, user_id: str):
         print("Initialisation de fb_graphql_call...")
 
         for attempt in range(self.max_retries):
@@ -776,17 +847,31 @@ class SearchFacebook(BaseTool, BaseScraper):
                 session.proxies.update(proxies)
                 print("proxies updated... done")
                 session.verify = False
+                print("query: ", query)
+                minBudget = query["minBudget"] or 0
+                maxBudget = query["maxBudget"] or 0
+                minBedrooms = query["minBedrooms"] or 0
+                maxBedrooms = query["maxBedrooms"] or 0
 
                 # Initialiser la session Facebook
-                headers, payload, variables = self.init_session(user_id, session)
+                headers, payload, variables = self.init_session(
+                    user_id,
+                    session,
+                    lat,
+                    lon,
+                    minBudget,
+                    maxBudget,
+                    minBedrooms,
+                    maxBedrooms,
+                )
 
                 if headers is None or payload is None:
                     print(
                         f"Session non initialisée pour user {user_id}, tentative {attempt + 1}"
                     )
                     if attempt < self.max_retries - 1:
-                        sleep_time = self.retry_delay * (attempt + 1) + random.uniform(
-                            1, 5
+                        sleep_time = (
+                            self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                         )
                         print(f"Nouvelle tentative dans {sleep_time} secondes...")
                         time.sleep(sleep_time)
@@ -795,25 +880,22 @@ class SearchFacebook(BaseTool, BaseScraper):
                         raise RuntimeError(
                             "Impossible d'initialiser la session Facebook"
                         )
-                print("payload: ", payload, "\n")
+
                 # Faire la requête POST initiale
                 resp_body = session.post(
                     "https://www.facebook.com/api/graphql/",
                     data=urllib.parse.urlencode(payload),
                 )
-                print("Apres first request")
-                print(f"Status code: {resp_body.status_code}")
-                print(f"Headers de réponse: {dict(resp_body.headers)}")
-                print(f"Contenu de la réponse: {resp_body.text[:25000]}")
 
                 # Vérifier que la réponse contient les bonnes données avec boucle while
                 try:
                     retry_count = 0
                     max_inner_retries = 3
-                    print("resp_body: ", resp_body.json)
 
                     while (
                         "marketplace_rentals_map_view_stories"
+                        not in resp_body.json().get("data", {}).get("viewer", {})
+                        and "marketplace_feed_stories"
                         not in resp_body.json().get("data", {}).get("viewer", {})
                         and retry_count < max_inner_retries
                     ):
@@ -835,6 +917,8 @@ class SearchFacebook(BaseTool, BaseScraper):
                     if (
                         "marketplace_rentals_map_view_stories"
                         not in resp_body.json().get("data", {}).get("viewer", {})
+                        and "marketplace_feed_stories"
+                        not in resp_body.json().get("data", {}).get("viewer", {})
                     ):
                         print(
                             "Impossible d'obtenir les données valides après toutes les tentatives internes"
@@ -844,7 +928,21 @@ class SearchFacebook(BaseTool, BaseScraper):
                         )
 
                     print("Données GraphQL récupérées avec succès")
-                    return resp_body.json()
+
+                    # Traiter les données selon leur type
+                    response_data = resp_body.json()
+                    viewer_data = response_data.get("data", {}).get("viewer", {})
+
+                    if "marketplace_rentals_map_view_stories" in viewer_data:
+                        print("📍 Traitement des données de la carte (map)")
+                        listings = self.add_listings(response_data)
+                    elif "marketplace_feed_stories" in viewer_data:
+                        print("📰 Traitement des données du feed")
+                        listings = self.add_feed_listings(response_data)
+                    else:
+                        print("⚠️ Type de données non reconnu")
+
+                    return listings
 
                 except Exception as e:
                     print(f"Erreur lors de la vérification des données: {e}")
@@ -853,7 +951,7 @@ class SearchFacebook(BaseTool, BaseScraper):
             except KeyError as e:
                 logger.error(f"Clé manquante dans la session pour user {user_id}: {e}")
                 if attempt < self.max_retries - 1:
-                    sleep_time = self.retry_delay * (attempt + 1) + random.uniform(1, 5)
+                    sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                     print(f"Nouvelle tentative dans {sleep_time} secondes...")
                     time.sleep(sleep_time)
                 else:
@@ -862,7 +960,7 @@ class SearchFacebook(BaseTool, BaseScraper):
             except Exception as e:
                 print(f"Erreur lors de la tentative {attempt + 1}: {e}")
                 if attempt < self.max_retries - 1:
-                    sleep_time = self.retry_delay * (attempt + 1) + random.uniform(1, 5)
+                    sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                     print(f"Nouvelle tentative dans {sleep_time} secondes...")
                     time.sleep(sleep_time)
                 else:
@@ -876,85 +974,3 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         # Si on arrive ici, toutes les tentatives ont échoué
         raise RuntimeError("Toutes les tentatives de fb_graphql_call ont échoué")
-
-    def scrape(self, lat, lon, query, user_id):
-        print("Initialisation de la methode Scrape...")
-
-        for attempt in range(self.max_retries):
-            # Méthode pour scraper les données à une position géographique donnée
-            try:
-                headers, payload, variables = self.init_fb_session(user_id)
-
-                session = self.load_fb_headers(headers, session)
-
-                # Met à jour les coordonnées de recherche dans les variables
-                variables["buyLocation"]["latitude"] = lat
-                variables["buyLocation"]["longitude"] = lon
-                variables["priceRange"] = [query["minBudget"], query["maxBudget"]]
-                variables["numericVerticalFieldsBetween"] = [
-                    {
-                        "max": query["maxBedrooms"],  # ex: 3
-                        "min": query["minBedrooms"],  # ex: 1
-                        "name": "bedrooms",
-                    }
-                ]
-
-                # Convertit les variables en JSON et les ajoute au payload
-                self.payload_to_send["variables"] = json.dumps(self.variables)
-
-                # print("headers: ", self.session.headers, "\n")
-
-                # Fait une requête POST à l'API GraphQL de Facebook
-                resp_body = self.session.post(
-                    "https://www.facebook.com/api/graphql/",
-                    data=urllib.parse.urlencode(self.payload_to_send),
-                )
-                # print(
-                # "resp_body: ",
-                # dict(list(resp_body.json().items())[:1])
-                # )
-
-                # Vérifie que la réponse contient bien les données d'appartements
-                try:
-                    while (
-                        "marketplace_rentals_map_view_stories"
-                        not in resp_body.json()["data"]["viewer"]
-                    ):
-                        print("pas le bon type de données")  # Affiche une erreur
-                        # print(f" resp json {resp_body.json()["data"]["viewer"]}") # Affiche la réponse pour debug
-                        # Réessaie la requête
-                        resp_body = self.session.post(
-                            "https://www.facebook.com/api/graphql/",
-                            data=urllib.parse.urlencode(self.payload_to_send),
-                        )
-                except Exception as e:
-                    print(f"Erreur lors de la vérification des données: {e}")
-                    raise
-
-                # Ajoute les annonces trouvées à la liste
-
-                # self.listings.append(resp_body.json())
-                self.add_listings(resp_body.json())
-
-            except Exception as e:
-                print(f"Erreur lors de la tentative {attempt + 1}: {e}")
-                if attempt < self.max_retries - 1:
-                    sleep_time = self.retry_delay * (attempt + 1) + random.uniform(1, 5)
-                    print(f"Nouvelle tentative dans {sleep_time} secondes...")
-                    sleep(sleep_time)
-                else:
-                    print(
-                        "Nombre maximum de tentatives atteint, passage au point suivant"
-                    )
-                    return []
-
-            # Attend 5 secondes entre chaque requête
-            print("wait 5 seconds...")
-            time.sleep(5)
-
-        # Après la boucle, retourne les résultats
-        if self.listings:
-            print("length of listings: ", len(self.listings))
-            return self.listings  # Retourne toute la liste
-        else:
-            return []  # Retourne liste vide si aucun résultat

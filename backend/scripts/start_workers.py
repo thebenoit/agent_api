@@ -1,4 +1,3 @@
-
 import os
 import sys
 import time
@@ -9,25 +8,26 @@ from typing import List
 import psutil
 
 
-def start_worker(worker_id: int, redis_url: str) -> None:
+def start_worker(worker_id: int, redis_url: str) -> subprocess.Popen:
     """
     Démarre un processus worker RQ
     """
     
     env = os.environ.copy()
-    env["Worker_ID"] = str(worker_id)
+    env["WORKER_ID"] = str(worker_id)
     env["REDIS_URL"] = redis_url
     
-    #Démarrer le worker dans un processus séparé
-    process = subprocess.Popen[(
+    # Démarrer le worker dans un processus séparé
+    process = subprocess.Popen([
         sys.executable,
         "workers/scraping_workers.py"
-    ), env=env]
+    ], env=env)
     
-    print(f"Worker {worker_id} démarree avec PID {process.pid}")
+    print(f"Worker {worker_id} démarré avec PID {process.pid}")
     return process
 
-def monitor_workers(processe: List[subprocess.Popen]):
+
+def monitor_workers(processes: List[subprocess.Popen]):
     """
     Surveille les workers et redémarre si nécessaire
     """
@@ -37,11 +37,12 @@ def monitor_workers(processe: List[subprocess.Popen]):
             if process.poll() is not None:
                 print(f"Worker {i} est mort (PID {process.pid}). Redémarrage...")
                 
-                #Redémarrer le worker
+                # Redémarrer le worker
                 redis_url = os.getenv("REDIS_URL")
                 processes[i] = start_worker(i, redis_url)
         time.sleep(5)
-        
+
+
 def main():
     """Point d'entrée principal"""
     
@@ -55,16 +56,14 @@ def main():
     # Démarrer tous les workers
     processes = []
     for i in range(num_workers):
-        process = start_worker_process(i, redis_url)
+        process = start_worker(i, redis_url)
         processes.append(process)
         time.sleep(1)  # Délai entre les démarrages
     
     print(f"Tous les workers démarrés. Surveillance en cours...")
     
     # Gestion des signaux pour arrêt propre
-
-    # Gestion des signaux pour arrêt propre
-def signal_handler(signum, frame):
+    def signal_handler(signum, frame):
         print(f"\nSignal {signum} reçu. Arrêt des workers...")
         for process in processes:
             if process.poll() is None:
@@ -81,5 +80,6 @@ def signal_handler(signum, frame):
     except KeyboardInterrupt:
         signal_handler(signal.SIGINT, None)
 
+
 if __name__ == "__main__":
-    main()               
+    main()

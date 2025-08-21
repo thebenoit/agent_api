@@ -64,6 +64,17 @@ class ScrapingWorker:
         logger.info(f"Signal {signum} reçu. Arrêt en cours...")
         self.thread_pool.shutdown(wait=True)
         sys.exit(0)
+        
+    def _publish_event(self, job_id: str, event:str,payload:dict):
+        """
+        Publie un événement SSE sur le canal Redis du job
+        """
+        try:
+            channel = f"sse:job:{job_id}"
+            data = json.dumps({"event": event, "payload":payload},default=str)
+            self.redis_client.publish(channel, data)
+        except Exception as e:
+            logger.warning(f"[{job_id}] publish_event error: {e}")
 
     def _init_scraper(self):
         """
@@ -86,10 +97,12 @@ class ScrapingWorker:
         Fonction de scraping qui sera exécutée par les workers RQ
         """
         start_time = time.time()
-        job_id = f"{user_id[:8]}_{int(time.time())}"
+        rq_job = get_current_job()
+        job_id = rq_job.id if rq_job else  f"{user_id[:8]}_{int(time.time())}"
 
         try:
             logger.info(f"Worker démarré pour user {user_id[:8]}")
+            self._publish_event(job_id, "start", {"message": "Démarrage du scraping"})
             self._init_scraper()
 
             city = search_params.get("city", "")
@@ -111,6 +124,8 @@ class ScrapingWorker:
             selected_place = random.choice(places_results["places"])
             lat = selected_place["location"]["latitude"]
             lon = selected_place["location"]["longitude"]
+            
+            self._publish_event(job_id,"progress",{"message":f"Coordonnées trouvées}")
 
             # 2. Scraping Facebook avec ThreadPoolExecutor
             logger.info(f"[{job_id}] Coordonnées: lat={lat}, lon={lon}")
@@ -151,7 +166,14 @@ class ScrapingWorker:
                 self.jobs_processed += 1
                 elapsed = time.time() - start_time
                 logger.info(f"[{job_id}] Job terminé en {elapsed:.2f}s")
-
+                payload = {
+                    "status": "success",
+                    "listings": listings,
+                    "processing_time":elapsed,
+                    "coordinates": {"lat": lat, "lon": lon},
+                }
+                self._publish_event(job_id,"completed",payload)
+                
                 return {
                     "status": "success",
                     "listings": listings,
@@ -262,7 +284,13 @@ def start_worker():
     except Exception as e:
         logger.error(f"Erreur fatale du worker: {e}")
         sys.exit(1)
-
+        
+def scrape_listings(search_params:dict[str,Any],user_id:str):
+    """
+    Fonction "pont" que RQ peut appeler.
+    """
+    worker = ScrapingWorker()
+    return worker.scrape_listings(search_params,user_id)
 
 if __name__ == "__main__":
     start_worker()

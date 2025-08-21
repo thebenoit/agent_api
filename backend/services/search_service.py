@@ -143,7 +143,7 @@ class SearchService:
         try:
             # Ajouter le job à la queue RQ
             job = self.scraping_queue.enqueue(
-                "workers.scraping_worker.scrape_listings",
+                "workers.scraping_workers.scrape_listings",
                 args=(search_params, user_id),
                 job_timeout=self.job_timeout,
                 retry=self.max_job_attempts,

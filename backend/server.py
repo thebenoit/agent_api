@@ -96,6 +96,35 @@ async def health():
 def read_root():
     return {"Hello": "World"}
 
+@app.get("/events/jobs/{job_id}")
+async def job_events(job_id:str):
+    """
+    SSE: écoute les événements du job via Redis Pub/Sub.
+    Le worker publie sur: sse:job:{job_id}    
+    """
+    
+    redis_url = os.getenv("REDIS_URL")
+    r = redis.from_url(redis_url, decode_responses=True)
+    pubsub = r.pubsub()
+    channel = f"sse:job:{job_id}"
+    pubsub.subscribe(channel)
+    
+    async def event_generator():
+        try:
+            while True:
+                message = pubsub.get_message(timeout=10.0)
+                if message: and message.get("type") == "message":
+                    data = message.get("data","")
+                    yield f"data: {data}\n\n"
+                await asyncio.sleep(0.05)
+        finally:
+            try:
+                pubsub.unsubscribe(channel)
+                pubsub.close()
+            except Exception as e:
+                pass
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @app.get("/user/info")
 async def get_user_info(req: Request):

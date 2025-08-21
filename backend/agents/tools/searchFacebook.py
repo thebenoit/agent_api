@@ -21,6 +21,8 @@ import logging
 import sys
 from bs4 import BeautifulSoup
 
+
+
 # rotating ip library
 from requests_ip_rotator import ApiGateway
 import urllib3

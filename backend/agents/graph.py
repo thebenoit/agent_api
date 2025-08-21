@@ -28,6 +28,7 @@ from langgraph.graph import (
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot, Command, interrupt
 from openai import OpenAIError
+from services.search_service import SearchService
 
 import os
 import random
@@ -46,9 +47,8 @@ from database_manager import mongo_manager
 # Configuration du logging
 logger = logging.getLogger(__name__)
 
-# from agents.tools import search_listing
-
 # Initialisation des outils
+search_service = None
 google_places = None
 facebook = None
 
@@ -58,6 +58,13 @@ try:
 except Exception as e:
     logger.error(f"Erreur initialisation GooglePlaces: {e}")
     google_places = None
+
+try:
+    search_service = SearchService()
+    logger.info("SearchService initialisé avec succès")
+except Exception as e:
+    logger.error(f"Erreur initialisation SearchService: {e}")
+    search_service = None
 
 try:
     facebook = SearchFacebook()
@@ -95,50 +102,123 @@ async def search_listing(
     )
 
     try:
-        default_radius = 500
-        logger.info("Appel de GooglePlaces.execute...")
-        response = google_places.execute(city, location_near)
-        logger.info(f"Réponse GooglePlaces: {response}")
+        if not search_services:
+            logger.error("SearchService non initialisé")
+            return {"error": "Service de recherche non disponible"}
 
-        places = response.get("places", [])
-        logger.info(f"Nombre de places trouvées: {len(places)}")
+        search_params = {
+            "city": city,
+            "min_bedrooms": min_bedrooms,
+            "max_bedrooms": max_bedrooms,
+            "min_price": min_price,
+            "max_price": max_price,
+            "location_near": location_near,
+            "enrich_top_k": enrich_top_k,
+        }
 
-        if not places:
-            logger.warning("Aucune place trouvée")
-            return []
+        user_ip = "127.0.0.1"
+        user_id = "default_user"
 
-        randomIndex = random.randrange(len(places))
-        selected_place = places[randomIndex]
-        logger.info(f"Place sélectionnée (index {randomIndex}): {selected_place}")
-
-        lat = selected_place["location"]["latitude"]
-        lon = selected_place["location"]["longitude"]
-        name = selected_place["displayName"]["text"]
-
-        logger.info(f"Coordonnées extraites: lat={lat}, lon={lon}, name={name}")
-
-        print("Selected location:", f"{name} (lat: {lat}, lon: {lon})")
-
-        logger.info("Appel de Facebook.execute_async...")
-        result = await facebook.execute_async(
-            lat,
-            lon,
-            min_price,
-            max_price,
-            min_bedrooms,
-            max_bedrooms,
-            top_k=enrich_top_k,
+        logger.info("Appel de SearchService.execute_search...")
+        result = await search_service.execute_search(
+            search_params,
+            user_ip,
+            user_id,
         )
-        logger.info(
-            f"Résultat Facebook: {len(result) if isinstance(result, list) else 'Non-liste'} éléments"
-        )
-        logger.info("=== FIN SEARCH_LISTING ===")
-        return result
+
+        logger.info(f"Résultat SearchService: {result}")
+
+        if result["status"] == "cached":
+            logger.info("✅ Cache hit - Réponse instantanée")
+            return {
+                "status": "success",
+                "data": result["data"],
+                "source": "cache",
+                "cached_at": result["cached_at"],
+            }
+        elif result["status"] == "queued":
+            # �� JOB EN QUEUE : Non-bloquant !
+            logger.info("�� Job mis en queue - Non-bloquant")
+            return {
+                "status": "queued",
+                "job_id": result["job_id"],
+                "message": result["message"],
+                "estimated_wait": result["estimated_wait"],
+                "source": "queue",
+            }
+        elif result["status"] == "processing":
+            # ⏳ JOB EN COURS : Déjà lancé
+            logger.info("⏳ Job déjà en cours")
+            return {
+                "status": "processing",
+                "job_id": result["job_id"],
+                "estimated_wait": result["estimated_wait"],
+                "source": "existing_job",
+            }
+
+        elif result["status"] == "completed":
+            # ✅ JOB TERMINÉ : Résultat disponible
+            logger.info("✅ Job terminé - Résultat disponible")
+            return {
+                "status": "success",
+                "data": result["data"],
+                "source": "completed_job",
+            }
+        elif result["status"] == "rate_limited":
+            # 🚫 RATE LIMIT : Trop de requêtes
+            logger.warning("�� Rate limit dépassé")
+            return {
+                "status": "rate_limited",
+                "message": result["message"],
+                "retry_after": result["retry_after"],
+            }
+
+        else:
+            # ❌ ERREUR : Gestion d'erreur
+            logger.error(f"❌ Statut inattendu: {result}")
+            return {
+                "status": "error",
+                "message": result.get("message", "Erreur inconnue"),
+                "error": result.get("error", "Erreur non spécifiée"),
+            }
 
     except Exception as e:
         logger.error(f"Erreur dans search_listing: {e}")
         logger.error(f"Traceback:", exc_info=True)
-        raise
+        return {
+            "status": "error",
+            "message": "Erreur lors de la recherche",
+            "error": str(e),
+        }
+    finally:
+        logger.info("=== FIN SEARCH_LISTING ===")
+
+
+@tool
+async def check_job_status(job_id: str):
+    """Check the status of a job.
+
+    Args:
+        job_id: The ID of the job to check
+
+    Returns:
+        dict: The status of the job
+    """
+    try:
+        if not search_service:
+            logger.error("SearchService non initialisé")
+            return {"error": "Service de recherche non disponible"}
+
+        result = await search_service.get_job_status(job_id)
+        logger.info(f"Statut du job {job_id}: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Erreur dans check_job_status: {e}")
+        return {
+            "status": "error",
+            "message": "Erreur lors de la vérification du statut du job",
+            "error": str(e),
+        }
 
 
 class IanGraph:
@@ -147,7 +227,7 @@ class IanGraph:
             model="gpt-4o-mini",
             api_key=os.getenv("OPENAI_API_KEY"),
             max_tokens=1000,
-        ).bind_tools([search_listing])
+        ).bind_tools([search_listing, check_job_status])
         # Utiliser le manager au lieu d'une connexion directe
         self._client = mongo_manager.get_async_client()
         self._graph: Optional[CompiledStateGraph] = None

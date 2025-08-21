@@ -6,7 +6,9 @@ import multiprocessing
 import subprocess
 from typing import List
 import psutil
+from dotenv import load_dotenv
 
+load_dotenv()
 
 def start_worker(worker_id: int, redis_url: str) -> subprocess.Popen:
     """

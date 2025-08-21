@@ -227,9 +227,9 @@ def start_worker():
             worker.work(
                 with_scheduler=True,
                 max_jobs=1000,  # Max jobs par worker avant redémarrage
-                job_timeout=30,  # Timeout par job
-                result_ttl=300,  # TTL des résultats
-                failure_ttl=60  # TTL des échecs
+                #job_timeout=30,  # Timeout par job
+                #result_ttl=300,  # TTL des résultats
+                #failure_ttl=60  # TTL des échecs
             )
     except Exception as e:
         logger.error(f"Erreur fatale du worker: {e}")

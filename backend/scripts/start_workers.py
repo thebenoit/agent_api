@@ -1,14 +1,18 @@
 import os
 import sys
+import json
 import time
 import signal
 import multiprocessing
+multiprocessing.set_start_method('spawn', force=True)
+
 import subprocess
 from typing import List
 import psutil
 from dotenv import load_dotenv
 
 load_dotenv()
+os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
 
 
 class WorkerManager:
@@ -31,7 +35,7 @@ class WorkerManager:
         process = subprocess.Popen(
             [sys.executable, "workers/scraping_workers.py"],
             env=env,
-            preexec_fn=os.setsid,
+            #preexec_fn=os.setsid,
         )
 
         print(f"Worker {worker_id} démarré avec PID {process.pid}")

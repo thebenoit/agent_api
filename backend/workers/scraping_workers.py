@@ -1,7 +1,9 @@
 import os
 import sys
+import json
 import logging
 import time
+from dotenv import load_dotenv
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
@@ -9,6 +11,7 @@ import redis
 from rq import Worker, Queue, get_current_job
 import signal
 import multiprocessing
+multiprocessing.set_start_method('spawn', force=True)
 
 # Ajouter le chemin du projet
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,6 +19,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.tools.searchFacebook import SearchFacebook
 from agents.tools.googlePlaces import GooglePlaces
 from services.search_service import SearchService
+
+load_dotenv()
+
+os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
 
 # Configuration du logging
 logging.basicConfig(

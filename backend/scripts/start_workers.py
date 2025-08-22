@@ -88,7 +88,6 @@ class WorkerManager:
         self.stop_all_workers()
         sys.exit(0)
 
-
     def run(self):
         """Point d'entrée principal avec gestion robuste des signaux"""
         # Configuration des signaux

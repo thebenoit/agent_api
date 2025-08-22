@@ -1,9 +1,12 @@
+import os
 import asyncio
 import json
+import hashlib
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from redis import Redis
+import redis
 from rq import Queue, get_current_job
 from rq.job import Job
 
@@ -38,15 +41,18 @@ class SearchService:
         CRUCIAL pour la production : évite le scraping répété.
         """
         # Normaliser les paramètres pour l'idempotence
+        # Normaliser les paramètres pour l'idempotence
+        location_near = search_params.get("location_near", [])
+        if location_near is None:
+            location_near = []
+
         normalized = {
             "city": str(search_params.get("city", "")).lower().strip(),
             "min_bedrooms": int(search_params.get("min_bedrooms", 0)),
             "max_bedrooms": int(search_params.get("max_bedrooms", 0)),
             "min_price": int(search_params.get("min_price", 0)),
             "max_price": int(search_params.get("max_price", 0)),
-            "location_near": sorted(
-                [str(x).lower().strip() for x in search_params.get("location_near", [])]
-            ),
+            "location_near": sorted([str(x).lower().strip() for x in location_near]),
             "enrich_top_k": int(search_params.get("enrich_top_k", 3)),
         }
 
@@ -143,10 +149,10 @@ class SearchService:
         try:
             # Ajouter le job à la queue RQ
             job = self.scraping_queue.enqueue(
-                "workers.scraping_worker.scrape_listings",
+                "workers.scraping_workers.scrape_listings_job",
                 args=(search_params, user_id),
                 job_timeout=self.job_timeout,
-                retry=self.max_job_attempts,
+                # retry=self.max_job_attempts,
                 retry_backoff=60,  # Retry après 1 minute
                 result_ttl=300,  # Garder le résultat 5 minutes
                 failure_ttl=60,  # Garder l'échec 1 minute

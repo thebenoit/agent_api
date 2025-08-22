@@ -6,8 +6,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
 import redis
-from rq import Worker, Queue, Connection
-from rq.worker import HerokuWorker as Worker
+from rq import Worker, Queue, get_current_job
 import signal
 import multiprocessing
 
@@ -64,14 +63,14 @@ class ScrapingWorker:
         logger.info(f"Signal {signum} reçu. Arrêt en cours...")
         self.thread_pool.shutdown(wait=True)
         sys.exit(0)
-        
-    def _publish_event(self, job_id: str, event:str,payload:dict):
+
+    def _publish_event(self, job_id: str, event: str, payload: dict):
         """
         Publie un événement SSE sur le canal Redis du job
         """
         try:
             channel = f"sse:job:{job_id}"
-            data = json.dumps({"event": event, "payload":payload},default=str)
+            data = json.dumps({"event": event, "payload": payload}, default=str)
             self.redis_client.publish(channel, data)
         except Exception as e:
             logger.warning(f"[{job_id}] publish_event error: {e}")
@@ -98,7 +97,7 @@ class ScrapingWorker:
         """
         start_time = time.time()
         rq_job = get_current_job()
-        job_id = rq_job.id if rq_job else  f"{user_id[:8]}_{int(time.time())}"
+        job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
 
         try:
             logger.info(f"Worker démarré pour user {user_id[:8]}")
@@ -124,8 +123,10 @@ class ScrapingWorker:
             selected_place = random.choice(places_results["places"])
             lat = selected_place["location"]["latitude"]
             lon = selected_place["location"]["longitude"]
-            
-            self._publish_event(job_id,"progress",{"message":f"Coordonnées trouvées"})
+
+            self._publish_event(
+                job_id, "progress", {"message": f"Coordonnées trouvées"}
+            )
 
             # 2. Scraping Facebook avec ThreadPoolExecutor
             logger.info(f"[{job_id}] Coordonnées: lat={lat}, lon={lon}")
@@ -169,11 +170,11 @@ class ScrapingWorker:
                 payload = {
                     "status": "success",
                     "listings": listings,
-                    "processing_time":elapsed,
+                    "processing_time": elapsed,
                     "coordinates": {"lat": lat, "lon": lon},
                 }
-                self._publish_event(job_id,"completed",payload)
-                
+                self._publish_event(job_id, "completed", payload)
+
                 return {
                     "status": "success",
                     "listings": listings,
@@ -254,6 +255,21 @@ class ScrapingWorker:
         }
 
 
+def scrape_listings_job(
+    search_params: dict[str, Any], user_id: str
+) -> List[dict[str, Any]]:
+    """
+    Fonction standalone pour RQ - crée une instance et appelle la méthode
+    Cette fonction peut être appelée directement par RQ sans passer par la classe
+    """
+    try:
+        worker_instance = ScrapingWorker()
+        return worker_instance.scrape_listings(search_params, user_id)
+    except Exception as e:
+        logger.error(f"Erreur dans scrape_listings_job: {e}")
+        raise
+
+
 def start_worker():
     """
     Point d'entrée pour démarrer un worker RQ
@@ -264,23 +280,21 @@ def start_worker():
         # Configuration Redis
         redis_url = os.getenv("REDIS_URL")
 
-        # Créer la queue
-        with Connection(redis.from_url(redis_url)):
-            queue = Queue("scraping")
+        # Créer la queue directement (plus besoin de Connection)
+        queue = Queue("scraping", connection=redis.from_url(redis_url))
 
-            # créer et démarrer le worker
-            worker = Worker([queue], connection=redis.from_url(redis_url))
+        # Créer et démarrer le worker
+        worker = Worker([queue], connection=redis.from_url(redis_url))
 
-            logger.info(f"Worker démarré avec PID {os.getpid()}")
-            logger.info(f"Ecoute la queue: {queue.name}")
+        logger.info(f"Worker démarré avec PID {os.getpid()}")
+        logger.info(f"Ecoute la queue: {queue.name}")
 
-            worker.work(
-                with_scheduler=True,
-                max_jobs=1000,  # Max jobs par worker avant redémarrage
-                # job_timeout=30,  # Timeout par job
-                # result_ttl=300,  # TTL des résultats
-                # failure_ttl=60  # TTL des échecs
-            )
+        # Nouvelle API RQ 2.5 - plus de paramètres incompatibles
+        worker.work(
+            with_scheduler=True,
+            max_jobs=1000,  # Max jobs par worker avant redémarrage
+        )
+
     except Exception as e:
         logger.error(f"Erreur fatale du worker: {e}")
         sys.exit(1)

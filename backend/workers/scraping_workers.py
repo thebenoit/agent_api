@@ -125,7 +125,7 @@ class ScrapingWorker:
             lat = selected_place["location"]["latitude"]
             lon = selected_place["location"]["longitude"]
             
-            self._publish_event(job_id,"progress",{"message":f"Coordonnées trouvées}")
+            self._publish_event(job_id,"progress",{"message":f"Coordonnées trouvées"})
 
             # 2. Scraping Facebook avec ThreadPoolExecutor
             logger.info(f"[{job_id}] Coordonnées: lat={lat}, lon={lon}")
@@ -284,13 +284,7 @@ def start_worker():
     except Exception as e:
         logger.error(f"Erreur fatale du worker: {e}")
         sys.exit(1)
-        
-def scrape_listings(search_params:dict[str,Any],user_id:str):
-    """
-    Fonction "pont" que RQ peut appeler.
-    """
-    worker = ScrapingWorker()
-    return worker.scrape_listings(search_params,user_id)
+
 
 if __name__ == "__main__":
     start_worker()

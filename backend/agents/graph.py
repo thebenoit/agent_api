@@ -102,7 +102,7 @@ async def search_listing(
     )
 
     try:
-        if not search_service:
+        if not search_services:
             logger.error("SearchService non initialisé")
             return {"error": "Service de recherche non disponible"}
 
@@ -119,8 +119,8 @@ async def search_listing(
         user_ip = "127.0.0.1"
         user_id = "default_user"
 
-        logger.info("Appel de SearchService.search_listings...")
-        result = await search_service.search_listings(
+        logger.info("Appel de SearchService.execute_search...")
+        result = await search_service.execute_search(
             search_params,
             user_ip,
             user_id,
@@ -137,8 +137,8 @@ async def search_listing(
                 "cached_at": result["cached_at"],
             }
         elif result["status"] == "queued":
-            # 🔄 JOB EN QUEUE : Non-bloquant !
-            logger.info("🔄 Job mis en queue - Non-bloquant")
+            # �� JOB EN QUEUE : Non-bloquant !
+            logger.info("�� Job mis en queue - Non-bloquant")
             return {
                 "status": "queued",
                 "job_id": result["job_id"],
@@ -166,7 +166,7 @@ async def search_listing(
             }
         elif result["status"] == "rate_limited":
             # 🚫 RATE LIMIT : Trop de requêtes
-            logger.warning("🚫 Rate limit dépassé")
+            logger.warning("�� Rate limit dépassé")
             return {
                 "status": "rate_limited",
                 "message": result["message"],
@@ -297,7 +297,7 @@ class IanGraph:
     async def _create_graph_builder(self):
         """Create the graph builder (without compilation)."""
         try:
-            tool_node = ToolNode([search_listing, check_job_status])
+            tool_node = ToolNode([search_listing])
             logger.info("ToolNode initialisé avec succès")
         except Exception as e:
             logger.error(f"Erreur initialisation ToolNode: {e}")
@@ -375,9 +375,5 @@ class IanGraph:
                 db_name=os.getenv("MONGO_DB"),
                 collection_name="checkpointers",
             )
-            # Créer le graph builder si pas encore fait
-            if not hasattr(self, "_graph_builder"):
-                self._graph_builder = await self._create_graph_builder()
-                
             self._graph = self._graph_builder.compile(checkpointer=checkpointer)
         return self._graph

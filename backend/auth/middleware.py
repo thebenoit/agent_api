@@ -10,12 +10,9 @@ from database import mongo_db
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Désactiver les logs de debug de PyMongo
+
 logging.getLogger("pymongo").setLevel(logging.WARNING)
-logging.getLogger("pymongo.topology").setLevel(logging.WARNING)
-logging.getLogger("pymongo.connection").setLevel(logging.WARNING)
-logging.getLogger("pymongo.server").setLevel(logging.WARNING)
-logging.getLogger("pymongo.pool").setLevel(logging.WARNING)
+
 
 
 async def auth_middleware(request: Request, call_next):
@@ -43,16 +40,36 @@ async def auth_middleware(request: Request, call_next):
                     "details": "Le serveur n'est pas correctement configuré",
                 },
             )
+            
+        token = None
 
         # Extraire le token du cookie session_id uniquement
         session_cookie = request.cookies.get("session_id")
+        
+        if session_cookie:
+            token = session_cookie
+            logger.info("Token extrait du cookie session_id")
+        
 
-        logger.info(
-            f"Cookie session_id: {session_cookie if session_cookie else 'Non trouvé'}"
-        )
 
         # Vérifier la présence du token
-        if not session_cookie:
+        if not token:
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.split(" ")[1]
+                logger.info("Token extrait de l'en-tête Authorization")
+            
+            logger.warning("Token d'authentification manquant")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "Authentification requise",
+                    "message": "Token d'authentification manquant",
+                    "details": "Veuillez vous connecter",
+                },
+            )
+            
+        if not token:
             logger.warning("Token d'authentification manquant")
             return JSONResponse(
                 status_code=401,
@@ -63,14 +80,13 @@ async def auth_middleware(request: Request, call_next):
                 },
             )
 
-        token = session_cookie
-        logger.info("Token extrait du cookie session_id")
-        # Vérifier que token n'est pas None avant d'utiliser l'opérateur de slice
-        logger.info(
-            f"Token extrait: {token[:20] if token and len(token) > 20 else token if token else 'Non trouvé'}..."
-        )
+
 
         try:
+            
+            if not token or token.strip() == "":
+                raise ValueError("Token vide")
+            
             # Decode le token
             logger.info("Tentative de décodage du token...")
             decoded = jwt.decode(token, secret_key, algorithms=["HS256"])
@@ -95,6 +111,22 @@ async def auth_middleware(request: Request, call_next):
                         "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
                     },
                 )
+                
+                
+            exp = decoded.get("exp")
+            if exp:
+                import time
+                current_time = int(time.time())
+                if current_time > exp:
+                    logger.error("Token expiré")
+                    return JSONResponse(
+                        status_code=401,
+                        content={
+                            "error": "Token expiré",
+                            "message": "Votre session a expiré",
+                            "details": "Veuillez vous reconnecter",
+                        },
+                    )
 
             logger.info("Recherche de l'utilisateur dans la base de données...")
             user = mongo_db.get_user_by_id(user_id)
@@ -123,6 +155,9 @@ async def auth_middleware(request: Request, call_next):
             logger.info(f"user_id injecté: {request.state.user_id}")
 
             chat_id = user.get("chatId")
+            if not chat_id:
+                chat_id = f"chat_{user_id}_{int(time.time())}"
+                logger.info(f"chatId généré: {chat_id}")
             logger.info(f"chatId extrait: {chat_id}")
             request.state.thread_id = chat_id
             logger.info(f"thread_id injecté: {request.state.thread_id}")

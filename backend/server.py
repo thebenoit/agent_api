@@ -72,6 +72,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",  # Vite dev server
         "http://localhost:3000",  # React dev server
+        "http://localhost:4000",  # Express server
     ],
     allow_credentials=True,
     allow_methods=["*"],

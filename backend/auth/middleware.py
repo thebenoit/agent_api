@@ -29,7 +29,7 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     try:
-        #configurer le secret key
+        # configurer le secret key
         secret_key = os.getenv("SECRET_KEY")
         logger.info(f"SECRET_KEY configurée: {'Oui' if secret_key else 'Non'}")
 
@@ -44,38 +44,15 @@ async def auth_middleware(request: Request, call_next):
                 },
             )
 
-        # Extraire le token du header Authorisation OU du cookie
-        auth_header = request.headers.get("Authorization")
+        # Extraire le token du cookie session_id uniquement
         session_cookie = request.cookies.get("session_id")
 
-        logger.info(f"Header Authorization: {auth_header[:8]}...")
         logger.info(
-            f"Cookie session_id: {session_cookie[:20] if session_cookie else 'Non trouvé'}..."
+            f"Cookie session_id: {session_cookie if session_cookie else 'Non trouvé'}"
         )
 
-        # Déterminer la source du token
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
-            # Vérifier si le token du header est vide ou null
-            if token and token.lower() != "null" and token.strip() != "":
-                logger.info("Token extrait du header Authorization")
-            elif session_cookie:
-                token = session_cookie
-                logger.info("Token extrait du cookie session_id (header vide)")
-            else:
-                logger.warning("Token d'authentification manquant")
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "error": "Authentification requise",
-                        "message": "Token d'authentification manquant",
-                        "details": "Veuillez vous connecter",
-                    },
-                )
-        elif session_cookie:
-            token = session_cookie
-            logger.info("Token extrait du cookie session_id")
-        else:
+        # Vérifier la présence du token
+        if not session_cookie:
             logger.warning("Token d'authentification manquant")
             return JSONResponse(
                 status_code=401,
@@ -86,7 +63,12 @@ async def auth_middleware(request: Request, call_next):
                 },
             )
 
-        logger.info(f"Token extrait: {token[:20]}...")
+        token = session_cookie
+        logger.info("Token extrait du cookie session_id")
+        # Vérifier que token n'est pas None avant d'utiliser l'opérateur de slice
+        logger.info(
+            f"Token extrait: {token[:20] if token and len(token) > 20 else token if token else 'Non trouvé'}..."
+        )
 
         try:
             # Decode le token
@@ -94,7 +76,6 @@ async def auth_middleware(request: Request, call_next):
             decoded = jwt.decode(token, secret_key, algorithms=["HS256"])
             logger.info(f"Token décodé avec succès: {decoded}")
 
-            
             user_id = decoded.get("userId")
             logger.info(f"userId extrait du token: {user_id}")
             logger.info(f"Type de userId: {type(user_id)}")

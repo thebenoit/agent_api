@@ -41,6 +41,45 @@ class MongoDB:
             logger.error(f"Error updating chat history: {e}")
             return None
 
+    async def get_user_id_from_session(self, session_id: str) -> Optional[str]:
+        """
+        Récupère le user_id depuis la session de chat.
+        Utilise le session_id (qui correspond au chatId) pour trouver l'utilisateur.
+        """
+        try:
+            logger.info(f"Tentative de récupération du user_id pour session_id: {session_id}")
+            
+            if not session_id:
+                logger.warning("Session_id est None ou vide")
+                return None
+            
+            # Récupérer la base de données asynchrone
+            db = mongo_manager.get_async_db()
+            
+            # Chercher dans la collection des utilisateurs via le chatId
+            logger.info(f"Recherche dans la collection users avec chatId: {session_id}")
+            user = await db.users.find_one({"chatId": session_id})
+            
+            if user and "_id" in user:
+                user_id = str(user["_id"])
+                logger.info(f"✅ User_id trouvé: {user_id}")
+                return user_id
+            else:
+                logger.warning(f"❌ Aucun utilisateur trouvé pour le chatId: {session_id}")
+                # Essayer de chercher par session_id directement
+                logger.info("Tentative de recherche alternative par session_id...")
+                user = await db.users.find_one({"session_id": session_id})
+                if user and "_id" in user:
+                    user_id = str(user["_id"])
+                    logger.info(f"✅ User_id trouvé via session_id: {user_id}")
+                    return user_id
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de la récupération du user_id: {e}")
+            logger.error(f"Traceback:", exc_info=True)
+            return None
+
 
 # Instance globale
 mongo_db = MongoDB()

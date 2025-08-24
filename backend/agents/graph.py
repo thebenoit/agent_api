@@ -43,6 +43,7 @@ from schemas import (
 )
 from utils import dump_messages, prepare_messages
 from database_manager import mongo_manager
+from database import mongo_db
 
 # Configuration du logging
 logger = logging.getLogger(__name__)
@@ -74,6 +75,29 @@ except Exception as e:
     facebook = None
 
 
+def get_current_session_id() -> Optional[str]:
+    """
+    Fonction helper pour récupérer le session_id actuel depuis l'instance IanGraph.
+    Cette fonction sera appelée depuis les tools pour accéder au contexte.
+    """
+    try:
+        # Récupérer l'instance IanGraph depuis le contexte global
+        # Cette approche nécessite que l'instance soit accessible
+        from server import agent  # ← Import de l'instance globale
+        
+        if hasattr(agent, '_current_session_id') and agent._current_session_id:
+            return agent._current_session_id
+        else:
+            logger.warning("Aucun session_id trouvé dans l'instance IanGraph")
+            return None
+            
+    except ImportError:
+        logger.warning("Impossible d'importer l'instance agent depuis server.py")
+        return None
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération du session_id: {e}")
+        return None
+
 @tool
 async def search_listing(
     city: str,
@@ -84,27 +108,35 @@ async def search_listing(
     location_near: Optional[list] = None,
     enrich_top_k: int = 3,
 ):
-    """Search listings in listings website according to user preferences.
-
-    Args:
-        city: The city to search in
-        min_bedrooms: Minimum bedrooms wanted
-        max_bedrooms: Maximum bedrooms wanted
-        min_price: Minimum price wanted
-        max_price: Maximum price wanted
-        location_near: Optional nearby locations in a list
-        enrich_top_k: Number of listings to enrich with page details
-
-    """
+    """Search listings in listings website according to user preferences."""
     logger.info(f"=== DÉBUT SEARCH_LISTING ===")
     logger.info(
         f"Paramètres reçus: city={city}, min_bedrooms={min_bedrooms}, max_bedrooms={max_bedrooms}, min_price={min_price}, max_price={max_price}, location_near={location_near}, enrich_top_k={enrich_top_k}"
     )
 
     try:
-        if not search_services:
+        if not search_service:
             logger.error("SearchService non initialisé")
             return {"error": "Service de recherche non disponible"}
+
+        # Récupérer le user_id depuis la session
+        # Utiliser la fonction helper pour récupérer le session_id
+        session_id = get_current_session_id()
+        
+        if session_id:
+            logger.info(f"Session_id récupéré: {session_id}")
+        else:
+            logger.warning("Impossible de récupérer le session_id, utilisation du fallback")
+            session_id = None
+
+        # Récupérer le user_id via la fonction de database.py
+        user_id = None
+        if session_id:
+            user_id = await mongo_db.get_user_id_from_session(session_id)
+        
+        if not user_id:
+            logger.warning("Impossible de récupérer le user_id, utilisation du fallback")
+            user_id = "default_user"
 
         search_params = {
             "city": city,
@@ -117,10 +149,10 @@ async def search_listing(
         }
 
         user_ip = "127.0.0.1"
-        user_id = "default_user"
+        
+        logger.info(f"Utilisation du user_id: {user_id}")
 
-        logger.info("Appel de SearchService.execute_search...")
-        result = await search_service.execute_search(
+        result = await search_service.search_listings(
             search_params,
             user_ip,
             user_id,
@@ -232,6 +264,7 @@ class IanGraph:
         self._client = mongo_manager.get_async_client()
         self._graph: Optional[CompiledStateGraph] = None
         self._checkpointer: Optional[AsyncMongoDBSaver] = None
+        self._current_session_id: Optional[str] = None  # ← NOUVEAU : Stocker le session_id actuel
 
     def __process_message(self, messages: list[BaseMessage]) -> list[Message]:
         openai_style_messages = convert_to_openai_messages(messages)
@@ -247,16 +280,11 @@ class IanGraph:
         session_id: str,
         user_id: Optional[str] = None,
     ) -> list[dict]:
-        """Get a response from the LLM.
-
-        Args:
-            messages (list[Message]): The messages to send to the LLM.
-            session_id (str): The session ID for Langfuse tracking.
-            user_id (Optional[str]): The user ID for Langfuse tracking.
-
-        Returns:
-            list[dict]: The response from the LLM.
-        """
+        """Get a response from the LLM."""
+        # Stocker le session_id pour l'utiliser dans les tools
+        self._current_session_id = session_id
+        logger.info(f"Session_id stocké pour cette session: {session_id}")
+        
         config = {
             "configurable": {"thread_id": session_id},
             "metadata": {

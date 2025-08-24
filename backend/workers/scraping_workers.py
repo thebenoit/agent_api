@@ -11,6 +11,7 @@ import redis
 from rq import Worker, Queue, get_current_job
 import signal
 import multiprocessing
+from datetime import datetime
 
 multiprocessing.set_start_method("spawn", force=True)
 
@@ -124,7 +125,15 @@ class ScrapingWorker:
             places_results = self.google_places.execute(city, location_near)
 
             if not places_results.get("places"):
-                raise Exception(f"Aucune place trouvée pour {city}")
+                error_msg = f"Aucune place trouvée pour {city}"
+                error_payload = {
+                    "error": error_msg,
+                    "message": "Aucun lieu trouvé pour cette ville",
+                    "timestamp": datetime.now().isoformat(),
+                    "retry_possible": True,
+                }
+                self._publish_event(job_id, "error", error_payload)
+                raise Exception(error_msg)
 
             import random
 
@@ -156,7 +165,7 @@ class ScrapingWorker:
 
             try:
                 listings = future.result(
-                    timeout=25
+                    timeout=60
                 )  # timeout 25s pour laisser 5s de marge
                 logger.info(f"[{job_id}] Scraping terminé: {len(listings)} listings")
 
@@ -193,10 +202,25 @@ class ScrapingWorker:
             except Exception as e:
                 logger.error(f"[{job_id}] Timeout ou erreur scraping {e}")
                 self.jobs_failed += 1
+                logger.error(f"[{job_id}] Erreur scraping: {e}")
+                error_payload = {
+                    "error": str(e),
+                    "message": "Erreur lors du scraping Facebook",
+                    "timestamp": datetime.now().isoformat(),
+                    "retry_possible": True,
+                }
+                self._publish_event(job_id, "error", error_payload)
                 raise
         except Exception as e:
             self.jobs_failed += 1
             logger.error(f"[{job_id}] Erreur fatale: {e}")
+            error_payload = {
+                "error": str(e),
+                "message": "Erreur fatale lors du scraping",
+                "timestamp": datetime.now().isoformat(),
+                "retry_possible": False,
+            }
+            self._publish_event(job_id, "error", error_payload)
             raise
 
     def _scrape_facebook_sync(
@@ -241,6 +265,13 @@ class ScrapingWorker:
 
         except Exception as e:
             logger.error(f"Erreur dans _scrape_facebook_sync: {e}")
+            error_payload = {
+                "error": str(e),
+                "message": "Erreur lors du scraping Facebook asynchrone",
+                "timestamp": datetime.now().isoformat(),
+                "retry_possible": True,
+            }
+            self._publish_event(job_id, "error", error_payload)
             return []
 
     def get_metrics(self) -> dict[str, Any]:
@@ -305,6 +336,21 @@ def start_worker():
 
     except Exception as e:
         logger.error(f"Erreur fatale du worker: {e}")
+        # Publier un événement d'erreur pour le démarrage du worker
+        try:
+            redis_client = redis.from_url(os.getenv("REDIS_URL"), decode_responses=True)
+            job_id = f"worker_startup_{int(time.time())}"
+            error_payload = {
+                "error": str(e),
+                "message": "Erreur fatale lors du démarrage du worker",
+                "timestamp": datetime.now().isoformat(),
+                "retry_possible": False,
+            }
+            channel = f"sse:job:{job_id}"
+            data = json.dumps({"event": "error", "payload": error_payload}, default=str)
+            redis_client.publish(channel, data)
+        except Exception as publish_error:
+            logger.error(f"Erreur lors de la publication de l'événement d'erreur de démarrage: {publish_error}")
         sys.exit(1)
 
 

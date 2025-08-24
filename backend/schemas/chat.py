@@ -62,6 +62,7 @@ class ChatRequest(BaseModel):
         ...,
         description="List of messages in the conversation",
         min_length=1,
+    
     )
     
 

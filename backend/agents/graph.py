@@ -339,7 +339,7 @@ class IanGraph:
     async def _chat(self, state: GraphState) -> dict:
 
         logger.info(f"=== DÉBUT CHATBOT ===")
-        logger.info(f"State reçu: {state}")
+        #logger.info(f"State reçu: {state}")
 
         try:
 

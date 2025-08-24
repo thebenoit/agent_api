@@ -141,6 +141,9 @@ async def get_user_info(req: Request):
         "thread_id": req.state.thread_id,
         "user": req.state.user,
     }
+    
+    
+
 
 
 # ... existing code ...

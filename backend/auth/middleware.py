@@ -5,15 +5,14 @@ from fastapi.responses import JSONResponse
 import jwt
 from typing import Optional
 from database import mongo_db
+import time
 
-# Configuration du logging - Désactiver les logs PyMongo
+# Configuration du logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
+# Désactiver les logs de debug de PyMongo
 logging.getLogger("pymongo").setLevel(logging.WARNING)
-
-
 
 async def auth_middleware(request: Request, call_next):
     """middleware to authenticate the user"""
@@ -26,7 +25,6 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     try:
-        # configurer le secret key
         secret_key = os.getenv("SECRET_KEY")
         logger.info(f"SECRET_KEY configurée: {'Oui' if secret_key else 'Non'}")
 
@@ -37,69 +35,102 @@ async def auth_middleware(request: Request, call_next):
                 content={
                     "error": "Erreur de configuration",
                     "message": "SECRET_KEY non configurée",
-                    "details": "Le serveur n'est pas correctement configuré",
                 },
             )
-            
+
+        # 🆕 AMÉLIORATION : Chercher le token dans plusieurs endroits avec priorité
         token = None
-
-        # Extraire le token du cookie session_id uniquement
-        session_cookie = request.cookies.get("session_id")
+        token_source = "unknown"
         
-        if session_cookie:
-            token = session_cookie
-            logger.info("Token extrait du cookie session_id")
+        # 1. D'abord dans le header Authorization (priorité haute)
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            token_source = "authorization_header"
+            logger.info("Token trouvé dans le header Authorization")
         
+        # 2. Sinon dans le cookie access_token (nouveau système)
+        elif not token:
+            access_cookie = request.cookies.get("access_token")
+            if access_cookie:
+                token = access_cookie
+                token_source = "access_cookie"
+                logger.info("Token trouvé dans le cookie access_token")
+        
+        # 3. Enfin dans le cookie session_id (ancien système - compatibilité)
+        elif not token:
+            session_cookie = request.cookies.get("session_id")
+            if session_cookie:
+                token = session_cookie
+                token_source = "session_cookie"
+                logger.info("Token trouvé dans le cookie session_id (mode compatibilité)")
 
-
-        # Vérifier la présence du token
         if not token:
-            auth_header = request.headers.get("Authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.split(" ")[1]
-                logger.info("Token extrait de l'en-tête Authorization")
-            
-            logger.warning("Token d'authentification manquant")
+            logger.warning("Aucun token d'authentification trouvé")
             return JSONResponse(
                 status_code=401,
                 content={
                     "error": "Authentification requise",
                     "message": "Token d'authentification manquant",
-                    "details": "Veuillez vous connecter",
+                    "details": "Veuillez vous reconnecter",
                 },
             )
-            
-        if not token:
-            logger.warning("Token d'authentification manquant")
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "error": "Authentification requise",
-                    "message": "Token d'authentification manquant",
-                    "details": "Veuillez vous connecter",
-                },
-            )
-
-
 
         try:
-            
+            # 🆕 AMÉLIORATION : Validation avancée du token
             if not token or token.strip() == "":
                 raise ValueError("Token vide")
-            
-            # Decode le token
-            logger.info("Tentative de décodage du token...")
+
+            # Décoder le token
+            logger.info(f"Token à décoder: '{token[:20]}...' (longueur: {len(token) if token else 0})")
+            logger.info(f"Secret key: '{secret_key[:10]}...' (longueur: {len(secret_key) if secret_key else 0})")
+            logger.info(f"Tentative de décodage du token depuis {token_source}...")
             decoded = jwt.decode(token, secret_key, algorithms=["HS256"])
-            logger.info(f"Token décodé avec succès: {decoded}")
+            logger.info(f"Token décodé avec succès")
 
-            user_id = decoded.get("userId")
+            # 🆕 NOUVEAU : Validation des claims de sécurité
+            current_time = int(time.time())
+            
+            # Vérifier l'expiration
+            exp = decoded.get("exp")
+            if not exp or current_time > exp:
+                logger.error("Token expiré")
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": "Token expiré",
+                        "message": "Votre session a expiré",
+                        "details": "Veuillez vous reconnecter",
+                    },
+                )
+
+            #  NOUVEAU : Vérifier l'audience
+            aud = decoded.get("audience")
+            if not aud or "chat_api" not in aud:
+                logger.error(f"Audience invalide: {aud}")
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": f"Token invalide",
+                        "message": "Token non destiné à ce service",
+                    },
+                )
+
+            #  NOUVEAU : Vérifier le type de token
+            token_type = decoded.get("tokenType")
+            if token_type != "access":
+                logger.error(f"Type de token invalide: {token_type}")
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": "Token invalide",
+                        "message": "Type de token non autorisé",
+                    },
+                )
+
+            # Extraire l'ID utilisateur
+            user_id = decoded.get("userId") or decoded.get("sub")
             logger.info(f"userId extrait du token: {user_id}")
-            logger.info(f"Type de userId: {type(user_id)}")
-
-            if isinstance(user_id, dict) and "_id" in user_id:
-                logger.info(f"user_id['_id']: {user_id['_id']}")
-            else:
-                logger.warning(f"user_id n'est pas un dict avec '_id': {user_id}")
 
             if not user_id:
                 logger.error("user_id manquant dans le token décodé")
@@ -108,35 +139,25 @@ async def auth_middleware(request: Request, call_next):
                     content={
                         "error": "Token invalide",
                         "message": "Le token ne contient pas d'identifiant utilisateur valide",
-                        "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
                     },
                 )
-                
-                
-            exp = decoded.get("exp")
-            if exp:
-                import time
-                current_time = int(time.time())
-                if current_time > exp:
-                    logger.error("Token expiré")
-                    return JSONResponse(
-                        status_code=401,
-                        content={
-                            "error": "Token expiré",
-                            "message": "Votre session a expiré",
-                            "details": "Veuillez vous reconnecter",
-                        },
-                    )
 
+            #  NOUVEAU : Vérifier le scope
+            scope = decoded.get("scope", "")
+            if "chat:read" not in scope:
+                logger.error(f"Scope insuffisant: {scope}")
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "Permissions insuffisantes",
+                        "message": "Vous n'avez pas les permissions nécessaires",
+                    },
+                )
+
+            # Rechercher l'utilisateur
             logger.info("Recherche de l'utilisateur dans la base de données...")
             user = mongo_db.get_user_by_id(user_id)
             logger.info(f"Utilisateur trouvé: {'Oui' if user else 'Non'}")
-
-            if user:
-                logger.info(f"Type de user: {type(user)}")
-                logger.info(
-                    f"Clés de user: {list(user.keys()) if isinstance(user, dict) else 'N/A'}"
-                )
 
             if not user:
                 logger.error(f"Utilisateur non trouvé pour user_id: {user_id}")
@@ -145,27 +166,35 @@ async def auth_middleware(request: Request, call_next):
                     content={
                         "error": "Utilisateur non trouvé",
                         "message": "L'utilisateur associé à ce token n'existe plus",
-                        "details": "Veuillez vous reconnecter",
                     },
                 )
 
-            # 5. Injecter les données dans request.state
+            #  NOUVEAU : Vérifier si l'utilisateur est actif
+            if user.get("status") == "inactive":
+                logger.error(f"Utilisateur inactif: {user_id}")
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "Compte désactivé",
+                        "message": "Votre compte a été désactivé",
+                    },
+                )
+
+            # Injecter les données dans request.state
             logger.info("Injection des données dans request.state...")
             request.state.user_id = user_id
-            logger.info(f"user_id injecté: {request.state.user_id}")
-
+            request.state.user = user
+            
+            # Gérer le chatId
             chat_id = user.get("chatId")
             if not chat_id:
                 chat_id = f"chat_{user_id}_{int(time.time())}"
-                logger.info(f"chatId généré: {chat_id}")
-            logger.info(f"chatId extrait: {chat_id}")
+                logger.info(f"ChatId créé: {chat_id}")
+            
             request.state.thread_id = chat_id
+            request.state.token_source = token_source  # 🆕 NOUVEAU : Pour le debug
             logger.info(f"thread_id injecté: {request.state.thread_id}")
 
-            request.state.user = user
-            logger.info(f"user injecté: {type(request.state.user)}")
-
-            # 6. Continuer vers l'endpoint
             logger.info("=== FIN MIDDLEWARE AUTH - CONTINUATION ===")
             return await call_next(request)
 
@@ -176,7 +205,7 @@ async def auth_middleware(request: Request, call_next):
                 content={
                     "error": "Token expiré",
                     "message": "Votre session a expiré",
-                    "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
+                    "details": "Veuillez vous reconnecter",
                 },
             )
         except jwt.InvalidSignatureError as e:
@@ -186,7 +215,6 @@ async def auth_middleware(request: Request, call_next):
                 content={
                     "error": "Token invalide",
                     "message": "Le token d'authentification est corrompu",
-                    "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
                 },
             )
         except jwt.DecodeError as e:
@@ -196,40 +224,32 @@ async def auth_middleware(request: Request, call_next):
                 content={
                     "error": "Token invalide",
                     "message": "Le format du token d'authentification est incorrect",
-                    "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
                 },
             )
-        except jwt.InvalidTokenError as e:
-            logger.error(f"Token JWT invalide: {e}")
+        except ValueError as e:
+            logger.error(f"Erreur de validation: {e}")
             return JSONResponse(
                 status_code=401,
                 content={
                     "error": "Token invalide",
-                    "message": "Le token d'authentification est invalide",
-                    "details": "Veuillez vous reconnecter pour obtenir un nouveau token",
+                    "message": str(e),
                 },
             )
         except Exception as e:
-            logger.error(
-                f"Erreur inattendue lors du décodage: {type(e).__name__}: {str(e)}"
-            )
-            logger.error(f"Traceback complet:", exc_info=True)
+            logger.error(f"Erreur inattendue lors du décodage: {type(e).__name__}: {str(e)}")
             return JSONResponse(
                 status_code=500,
                 content={
                     "error": "Erreur d'authentification",
                     "message": "Une erreur s'est produite lors de l'authentification",
-                    "details": "Veuillez réessayer plus tard",
                 },
             )
     except Exception as e:
         logger.error(f"Erreur critique dans le middleware: {e}")
-        logger.error(f"Traceback complet:", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={
                 "error": "Erreur interne du serveur",
                 "message": "Une erreur inattendue s'est produite",
-                "details": "Veuillez réessayer plus tard",
             },
         )

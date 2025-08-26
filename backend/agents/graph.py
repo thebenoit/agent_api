@@ -10,6 +10,8 @@ from typing import (
 )
 from motor.motor_asyncio import AsyncIOMotorClient
 
+from typing_extensions import Annotated
+
 
 from langchain_core.messages import (
     BaseMessage,
@@ -19,7 +21,7 @@ from langchain_core.messages import (
 from langchain_openai import ChatOpenAI
 
 from langgraph.checkpoint.mongodb.aio import AsyncMongoDBSaver
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode, tools_condition, InjectedState
 from langgraph.graph import (
     END,
     START,
@@ -84,6 +86,7 @@ async def search_listing(
     max_price: int,
     location_near: Optional[list] = None,
     enrich_top_k: int = 3,
+    state: Annotated[dict,InjectedState] = None
 ):
     """Search listings in listings website according to user preferences."""
     logger.info(f"=== DÉBUT SEARCH_LISTING ===")
@@ -97,6 +100,7 @@ async def search_listing(
             return {"error": "Service de recherche non disponible"}
 
 
+        session_id = state["session_id"]
         
         if session_id:
             logger.info(f"Session_id récupéré: {session_id}")
@@ -105,13 +109,15 @@ async def search_listing(
             session_id = None
 
         # Récupérer le user_id via la fonction de database.py
-        user_id = None
-        if session_id:
-            user_id = await mongo_db.get_user_id_from_session(session_id)
+        # user_id = None
+        # if session_id:
+        #     user_id = await mongo_db.get_user_id_from_session(session_id)
         
-        if not user_id:
-            logger.warning("Impossible de récupérer le user_id, utilisation du fallback")
-            user_id = "default_user"
+        
+        
+        # if not user_id:
+        #     logger.warning("Impossible de récupérer le user_id, utilisation du fallback")
+        #     user_id = "default_user"
 
         search_params = {
             "city": city,

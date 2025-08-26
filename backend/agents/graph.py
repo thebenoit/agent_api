@@ -108,16 +108,6 @@ async def search_listing(
             logger.warning("Impossible de récupérer le session_id, utilisation du fallback")
             session_id = None
 
-        # Récupérer le user_id via la fonction de database.py
-        # user_id = None
-        # if session_id:
-        #     user_id = await mongo_db.get_user_id_from_session(session_id)
-        
-        
-        
-        # if not user_id:
-        #     logger.warning("Impossible de récupérer le user_id, utilisation du fallback")
-        #     user_id = "default_user"
 
         search_params = {
             "city": city,
@@ -131,12 +121,12 @@ async def search_listing(
 
         user_ip = "127.0.0.1"
         
-        logger.info(f"Utilisation du user_id: {user_id}")
+        
 
         result = await search_service.search_listings(
             search_params,
             user_ip,
-            user_id,
+            session_id,
         )
 
         logger.info(f"Résultat SearchService: {result}")

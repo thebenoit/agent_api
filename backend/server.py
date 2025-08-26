@@ -18,6 +18,7 @@ from schemas import ChatRequest
 from database_manager import mongo_manager
 import atexit
 import logging
+import asyncio
 
 # Configuration du logging
 logger = logging.getLogger(__name__)
@@ -91,6 +92,11 @@ class chatResponse(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@atexit.register
+def cleanup():
+    """Ferme proprement les connexions MongoDB à la fermeture de l'application."""
+    mongo_manager.close_all()
 
 
 @app.get("/")
@@ -204,3 +210,13 @@ async def chat(request: ChatRequest, req: Request):
 def cleanup():
     """Ferme proprement les connexions MongoDB à la fermeture de l'application."""
     mongo_manager.close_all()
+    
+    
+if __name__ == "__main__":
+    uvicorn.run(
+        "server:app",
+        host="0.0.0.0",
+        port=8000,
+        workers=4,
+        access_log=True,
+        )

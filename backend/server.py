@@ -165,29 +165,16 @@ async def chat(request: ChatRequest, req: Request):
                 },
             )
 
-        # print("user_info:", user_info)
-
-        # input_data = {"messages": [{"role": "user", "content": user_message}]}
 
         # Utiliser le thread_id de l'utilisateur authentifié
-        config = {"configurable": {"thread_id": user_info["chatId"]}}
+        config = {"configurable": {"thread_id": user_info["_id"]}}
 
         agent_response = await agent._get_response(
             messages=request.messages,
-            session_id=user_info["chatId"],
+            session_id=user_info["_id"],
             user_id=user_info["_id"],
         )
 
-        # response = await graph.ainvoke(
-        #     input=input_data,
-        #     config=config,
-        # )
-
-        # response = await graph.ainvoke(input=input_data, config=config)
-
-        ##Ajouter Human Message dans la base de données
-
-        ##Ajouter AI Message dans la base de données
 
         return {"response": agent_response}
     except NotImplementedError as e:

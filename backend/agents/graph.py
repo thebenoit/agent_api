@@ -75,29 +75,6 @@ except Exception as e:
     facebook = None
 
 
-def get_current_session_id() -> Optional[str]:
-    """
-    Fonction helper pour récupérer le session_id actuel depuis l'instance IanGraph.
-    Cette fonction sera appelée depuis les tools pour accéder au contexte.
-    """
-    try:
-        # Récupérer l'instance IanGraph depuis le contexte global
-        # Cette approche nécessite que l'instance soit accessible
-        from server import agent  # ← Import de l'instance globale
-        
-        if hasattr(agent, '_current_session_id') and agent._current_session_id:
-            return agent._current_session_id
-        else:
-            logger.warning("Aucun session_id trouvé dans l'instance IanGraph")
-            return None
-            
-    except ImportError:
-        logger.warning("Impossible d'importer l'instance agent depuis server.py")
-        return None
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération du session_id: {e}")
-        return None
-
 @tool
 async def search_listing(
     city: str,
@@ -119,9 +96,7 @@ async def search_listing(
             logger.error("SearchService non initialisé")
             return {"error": "Service de recherche non disponible"}
 
-        # Récupérer le user_id depuis la session
-        # Utiliser la fonction helper pour récupérer le session_id
-        session_id = get_current_session_id()
+
         
         if session_id:
             logger.info(f"Session_id récupéré: {session_id}")
@@ -264,8 +239,7 @@ class IanGraph:
         self._client = mongo_manager.get_async_client()
         self._graph: Optional[CompiledStateGraph] = None
         self._checkpointer: Optional[AsyncMongoDBSaver] = None
-        self._current_session_id: Optional[str] = None  # ← NOUVEAU : Stocker le session_id actuel
-
+       
     def __process_message(self, messages: list[BaseMessage]) -> list[Message]:
         openai_style_messages = convert_to_openai_messages(messages)
         return [
@@ -281,8 +255,6 @@ class IanGraph:
         user_id: Optional[str] = None,
     ) -> list[dict]:
         """Get a response from the LLM."""
-        # Stocker le session_id pour l'utiliser dans les tools
-        self._current_session_id = session_id
         logger.info(f"Session_id stocké pour cette session: {session_id}")
         
         config = {
@@ -339,6 +311,7 @@ class IanGraph:
             logger.error(f"Erreur initialisation StateGraph: {e}")
             logger.error(f"Traceback:", exc_info=True)
             raise
+        
 
         logger.info("Ajout des nodes au graph...")
         try:

@@ -111,15 +111,19 @@ async def job_events(job_id: str):
     Le worker publie sur: sse:job:{job_id}
     """
     try:
+        #connexion à redis
         redis_url = os.getenv("REDIS_URL")
         r = redis.from_url(redis_url, decode_responses=True)
+        
+        #Abonnement au channel
         pubsub = r.pubsub()
         channel = f"sse:job:{job_id}"
         pubsub.subscribe(channel)
 
         async def event_generator():
             try:
-                while True:
+                while True: #Boucle infinie pour écouter les événements
+                    #ecoute les messages de redis
                     message = pubsub.get_message(timeout=10.0)
                     if message and message.get("type") == "message":
                         data = message.get("data", "")

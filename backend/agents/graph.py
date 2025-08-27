@@ -86,9 +86,21 @@ async def search_listing(
     max_price: int,
     location_near: Optional[list] = None,
     enrich_top_k: int = 3,
-    state: Annotated[dict,InjectedState] = None
+    session_id: Annotated[str, InjectedState("session_id")] = None
 ):
-    """Search listings in listings website according to user preferences."""
+    """Search listings in listings website according to user preferences.
+
+    Args:
+        city: The city to search in
+        min_bedrooms: Minimum bedrooms wanted
+        max_bedrooms: Maximum bedrooms wanted
+        min_price: Minimum price wanted
+        max_price: Maximum price wanted
+        location_near: Optional nearby locations in a list
+        enrich_top_k: Number of listings to enrich with page details
+        state: The state of the graph
+
+    """
     logger.info(f"=== DÉBUT SEARCH_LISTING ===")
     logger.info(
         f"Paramètres reçus: city={city}, min_bedrooms={min_bedrooms}, max_bedrooms={max_bedrooms}, min_price={min_price}, max_price={max_price}, location_near={location_near}, enrich_top_k={enrich_top_k}"
@@ -98,15 +110,6 @@ async def search_listing(
         if not search_service:
             logger.error("SearchService non initialisé")
             return {"error": "Service de recherche non disponible"}
-
-
-        session_id = state["session_id"]
-        
-        if session_id:
-            logger.info(f"Session_id récupéré: {session_id}")
-        else:
-            logger.warning("Impossible de récupérer le session_id, utilisation du fallback")
-            session_id = None
 
 
         search_params = {
@@ -230,7 +233,7 @@ class IanGraph:
             model="gpt-4o-mini",
             api_key=os.getenv("OPENAI_API_KEY"),
             max_tokens=1000,
-        ).bind_tools([search_listing, check_job_status])
+        ).bind_tools([search_listing])
         # Utiliser le manager au lieu d'une connexion directe
         self._client = mongo_manager.get_async_client()
         self._graph: Optional[CompiledStateGraph] = None
@@ -337,6 +340,13 @@ class IanGraph:
 
         logger.info(f"=== DÉBUT CHATBOT ===")
         #logger.info(f"State reçu: {state}")
+        logger.info(f"DEBUG STATE COMPLET: {state}")
+        
+        if hasattr(state, "session_id"):
+            logger.info(f"Session_id récupéré: {state.session_id}")
+        else:
+            logger.warning("Impossible de récupérer le session_id, utilisation du fallback")
+            state.session_id = None
 
         try:
 

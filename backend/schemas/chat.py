@@ -76,6 +76,7 @@ class ChatResponse(BaseModel):
     """
 
     messages: List[Message] = Field(..., description="List of messages in the conversation")
+    job_id: str = Field(..., description="Job ID")
     listings: List[dict] = Field(..., description="List of listings")
     map_data: dict = Field(..., description="Map data")
 

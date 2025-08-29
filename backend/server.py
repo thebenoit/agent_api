@@ -4,7 +4,7 @@ import uvicorn
 
 # from agents.ian import graph
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -19,6 +19,11 @@ from database_manager import mongo_manager
 import atexit
 import logging
 import asyncio
+import redis
+from langchain_core.callbacks.manager import AsyncCallbackManager
+from langchain_core.callbacks.base import AsyncCallbackHandler
+
+
 
 # Configuration du logging
 logger = logging.getLogger(__name__)
@@ -162,10 +167,10 @@ async def get_user_info(req: Request):
 @app.post("/chat")
 async def chat(request: ChatRequest, req: Request):
     try:
-        # get the user message
-        # user_message = request.messages
 
-        user_info = mongo_db.get_user_by_id(req.state.user_id)
+
+        user_info = req.state.user
+        
         if user_info is None:
             return JSONResponse(
                 status_code=404,
@@ -174,19 +179,31 @@ async def chat(request: ChatRequest, req: Request):
                     "message": "L'utilisateur n'existe plus dans la base de données",
                 },
             )
-
-
-        # Utiliser le thread_id de l'utilisateur authentifié
-        config = {"configurable": {"thread_id": user_info["_id"]}}
+        
+        dernier_message = request.messages[-1]
+        
 
         agent_response = await agent._get_response(
-            messages=request.messages,
+            messages=[dernier_message],
             session_id=user_info["_id"],
             user_id=user_info["_id"],
         )
+        
+        result = {"response": agent_response}
 
+                
+        print("result:", result, "\n")
+        
+        if agent_response:
+            try:
+                payload = json.loads(result["content"])
+                if isinstance(payload, dict) and payload.get("job_id"):
+                    result["job_id"] = payload["job_id"]
+            except (ValueError, KeyError):
+                pass
+        return result
+        
 
-        return {"response": agent_response}
     except NotImplementedError as e:
         logger.error(f"Erreur NotImplementedError: {e}")
         return JSONResponse(
@@ -208,6 +225,34 @@ async def chat(request: ChatRequest, req: Request):
             },
         )
 
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest, req: Request):
+    
+    checkpointer_id = req.state.user_id
+    
+    if checkpointer_id is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "Utilisateur non trouvé",
+                "message": "L'utilisateur n'existe plus dans la base de données",
+                },
+            )
+    
+    
+    
+    
+    
+
+    return StreamingResponse(
+        generate_chat_response(messages, checkpoint_id),
+        media_type="text/event-stream",
+        
+    )
+    
+    
+
+    
 
 # Gestionnaire de fermeture propre
 @atexit.register
@@ -223,4 +268,5 @@ if __name__ == "__main__":
         port=8000,
         workers=4,
         access_log=True,
+        reload=True,
         )

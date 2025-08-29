@@ -36,6 +36,8 @@ import os
 import random
 import logging
 from langchain_core.tools import tool
+from langchain_core.callbacks.manager import AsyncCallbackManager
+from langchain_core.callbacks.base import AsyncCallbackHandler
 from agents.tools.searchFacebook import SearchFacebook
 from agents.tools.googlePlaces import GooglePlaces
 from schemas import (
@@ -132,7 +134,7 @@ async def search_listing(
             session_id,
         )
 
-        logger.info(f"Résultat SearchService: {result}")
+        #logger.info(f"Résultat SearchService: {result}")
 
         if result["status"] == "cached":
             logger.info("✅ Cache hit - Réponse instantanée")
@@ -246,6 +248,66 @@ class IanGraph:
             for message in openai_style_messages
             if message["role"] in ["assistant", "user"] and message["content"]
         ]
+        
+    async def get_stream_response(self, messages: list[Message], session_id: str):
+        
+        config = {
+            "configurable": {"thread_id": session_id},
+            "metadata": {
+                "debug": False,
+            },
+        }
+        
+        try:
+            # ✅ Créer le checkpointer et compiler le graph pour cette invocation
+            async with AsyncMongoDBSaver.from_conn_string(
+                os.getenv("MONGO_URI"),
+                db_name=os.getenv("MONGO_DB"),
+                collection_name="checkpointers",
+            ) as checkpointer:
+
+                # Créer le graph builder si pas encore fait
+                if not hasattr(self, "_graph_builder"):
+                    self._graph_builder = await self._create_graph_builder()
+
+                # Compiler le graph avec le checkpointer pour cette invocation
+                graph_with_checkpointer = self._graph_builder.compile(
+                    checkpointer=checkpointer
+                )
+                
+                event = graph_with_checkpointer.stream_events(
+                    {"messages": dump_messages(messages), "session_id": session_id},
+                    config=config,
+                )
+                
+                async for event in event:
+                    event_type = event["event"]
+                    
+                    
+                    yield event
+            
+            
+            
+            
+            
+            
+                    
+
+
+                
+                
+                
+
+        except Exception as e:
+            logger.error(f"error_getting_response: {e}")
+            raise e
+
+        
+        
+        
+        
+        
+        
 
     async def _get_response(
         self,
@@ -288,6 +350,11 @@ class IanGraph:
                     {"messages": dump_messages(messages), "session_id": session_id_str},
                     config=config,
                 )
+                
+                logger.info(f"response: {response} \n")
+                
+                
+                
                 return self.__process_message(response["messages"])
         except Exception as e:
             logger.error(f"error_getting_response: {e}")
@@ -339,8 +406,6 @@ class IanGraph:
     async def _chat(self, state: GraphState) -> dict:
 
         logger.info(f"=== DÉBUT CHATBOT ===")
-        #logger.info(f"State reçu: {state}")
-        logger.info(f"DEBUG STATE COMPLET: {state}")
         
         if hasattr(state, "session_id"):
             logger.info(f"Session_id récupéré: {state.session_id}")
@@ -349,6 +414,8 @@ class IanGraph:
             state.session_id = None
 
         try:
+            
+            logger.info(f"lenght of state.messages: {len(state.messages)}")
 
             messages = prepare_messages(
                 state.messages,
@@ -367,20 +434,3 @@ class IanGraph:
             logger.error(f"Erreur dans chatbot: {e}")
             logger.error(f"Traceback:", exc_info=True)
             raise
-
-    async def create_graph(self) -> Optional[CompiledStateGraph]:
-        """Create and configure the LangGraph workflow.
-
-        Returns:
-            Optional[CompiledStateGraph]: The configured LangGraph instance or None if init fails
-        """
-        if self._graph is None:
-            # ✅ Utilise une connexion séparée pour le checkpointer
-            # pour éviter de fermer la connexion principale
-            checkpointer = AsyncMongoDBSaver.from_conn_string(
-                os.getenv("MONGO_URI"),
-                db_name=os.getenv("MONGO_DB"),
-                collection_name="checkpointers",
-            )
-            self._graph = self._graph_builder.compile(checkpointer=checkpointer)
-        return self._graph

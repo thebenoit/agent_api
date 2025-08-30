@@ -14,7 +14,7 @@ from auth.middleware import auth_middleware
 from database import mongo_db
 import json
 from agents.graph import IanGraph
-from schemas import ChatRequest
+from schemas import ChatRequest, Message
 from database_manager import mongo_manager
 import atexit
 import logging
@@ -66,6 +66,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Ajouter le middleware d'authentification
 @app.middleware("http")
 async def auth_middleware_wrapper(request: Request, call_next):
+    if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi.json"):
+        print("docs")
+        return await call_next(request)
+    
     return await auth_middleware(request, call_next)
 
 
@@ -191,8 +195,6 @@ async def chat(request: ChatRequest, req: Request):
         
         result = {"response": agent_response}
 
-                
-        print("result:", result, "\n")
         
         if agent_response:
             try:
@@ -225,8 +227,8 @@ async def chat(request: ChatRequest, req: Request):
             },
         )
 
-@app.post("/chat/stream")
-async def chat_stream(request: ChatRequest, req: Request):
+@app.get("/chat/stream")
+async def chat_stream(message: str, req: Request):
     
     checkpointer_id = req.state.user_id
     
@@ -238,16 +240,13 @@ async def chat_stream(request: ChatRequest, req: Request):
                 "message": "L'utilisateur n'existe plus dans la base de données",
                 },
             )
+    msg = Message(role="user", content=message)
     
-    
-    
-    
-    
-
     return StreamingResponse(
-        generate_chat_response(messages, checkpoint_id),
+        agent.get_stream_response([msg], checkpointer_id),
         media_type="text/event-stream",
         
+
     )
     
     

@@ -17,6 +17,7 @@ from langchain_core.messages import (
     BaseMessage,
     ToolMessage,
     convert_to_openai_messages,
+    AIMessageChunk,
 )
 from langchain_openai import ChatOpenAI
 
@@ -35,6 +36,7 @@ from services.search_service import SearchService
 import os
 import random
 import logging
+import json
 from langchain_core.tools import tool
 from langchain_core.callbacks.manager import AsyncCallbackManager
 from langchain_core.callbacks.base import AsyncCallbackHandler
@@ -145,8 +147,8 @@ async def search_listing(
                 "cached_at": result["cached_at"],
             }
         elif result["status"] == "queued":
-            # �� JOB EN QUEUE : Non-bloquant !
-            logger.info("�� Job mis en queue - Non-bloquant")
+            # 📋 JOB EN QUEUE : Non-bloquant !
+            logger.info("📋 Job mis en queue - Non-bloquant")
             return {
                 "status": "queued",
                 "job_id": result["job_id"],
@@ -174,7 +176,7 @@ async def search_listing(
             }
         elif result["status"] == "rate_limited":
             # 🚫 RATE LIMIT : Trop de requêtes
-            logger.warning("�� Rate limit dépassé")
+            logger.warning("🚫 Rate limit dépassé")
             return {
                 "status": "rate_limited",
                 "message": result["message"],
@@ -248,7 +250,13 @@ class IanGraph:
             for message in openai_style_messages
             if message["role"] in ["assistant", "user"] and message["content"]
         ]
-        
+          
+    def serialise_ai_message_chunk(self, chunk: dict) -> str:
+        if(isinstance(chunk, AIMessageChunk)):
+            return chunk.content
+        else:
+            raise TypeError(f"Expected AIMessageChunk, got {type(chunk).__name__}")
+
     async def get_stream_response(self, messages: list[Message], session_id: str):
         
         config = {
@@ -275,39 +283,40 @@ class IanGraph:
                     checkpointer=checkpointer
                 )
                 
-                event = graph_with_checkpointer.stream_events(
+                events = graph_with_checkpointer.astream_events(
                     {"messages": dump_messages(messages), "session_id": session_id},
                     config=config,
                 )
-                
-                async for event in event:
+                async for event in events:
                     event_type = event["event"]
                     
+                    # 🔍 DEBUG : Voir la structure de l'event
+                    print(f"Event reçu: {event}\n")
+                    print(f"Event type: {event_type}\n")
+                    print(f"Event data keys: {event.get('data', {}).keys()}")
                     
-                    yield event
-            
-            
-            
-            
-            
-            
+                    # ✅ APRÈS (sécurisé) - Vérifier AVANT d'accéder
+                    if event_type in ("on_llm_stream","on_chat_model_stream") and "chunk" in event.get("data", {}):
+                        chunk_content = self.serialise_ai_message_chunk(event["data"]["chunk"])
+                        payload = {"type": "content", "content": chunk_content}
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    # elif event_type == "on_chat_model_stream":
+                        
+                    # elif event_type == "on_tool_start":
+                    #     tools_call = event["data"]["output"].tool_calls if hasattr(event["data"]["output"], "tool_calls") else []
+                    #     print(f"Tool start event: {event}")
+                    elif event_type in ("end","on_chat_model_end") or (
+                        event_type == "on_chain_end" and event.get("name") == "LangGraph"
+                    ):
+                        yield f"data: {json.dumps({'type': '[DONE]'})}\n\n"
+                        break
                     
-
-
-                
-                
-                
+ 
 
         except Exception as e:
             logger.error(f"error_getting_response: {e}")
             raise e
-
-        
-        
-        
-        
-        
-        
+      
 
     async def _get_response(
         self,

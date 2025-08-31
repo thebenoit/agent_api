@@ -245,8 +245,6 @@ async def chat_stream(message: str, req: Request):
     return StreamingResponse(
         agent.get_stream_response([msg], checkpointer_id),
         media_type="text/event-stream",
-        
-
     )
     
     

@@ -18,6 +18,9 @@ from langchain_core.messages import (
     ToolMessage,
     convert_to_openai_messages,
     AIMessageChunk,
+    HumanMessage,
+    AIMessage,
+    SystemMessage,
 )
 from langchain_openai import ChatOpenAI
 
@@ -136,7 +139,7 @@ async def search_listing(
             session_id,
         )
 
-        #logger.info(f"Résultat SearchService: {result}")
+        logger.info(f"Résultat SearchService: {result}")
 
         if result["status"] == "cached":
             logger.info("✅ Cache hit - Réponse instantanée")
@@ -237,7 +240,7 @@ class IanGraph:
             model="gpt-4o-mini",
             api_key=os.getenv("OPENAI_API_KEY"),
             max_tokens=1000,
-        ).bind_tools([search_listing])
+         ).bind_tools([search_listing])
         # Utiliser le manager au lieu d'une connexion directe
         self._client = mongo_manager.get_async_client()
         self._graph: Optional[CompiledStateGraph] = None
@@ -256,6 +259,59 @@ class IanGraph:
             return chunk.content
         else:
             raise TypeError(f"Expected AIMessageChunk, got {type(chunk).__name__}")
+
+    def _coerce_messages(self, msgs: list[Any]) -> list[BaseMessage]:
+        """Ensure history is a list of LangChain BaseMessage, preserving ToolMessages.
+
+        Accepts history items as BaseMessage or dicts with role/content (and optional tool fields).
+        """
+        coerced: list[BaseMessage] = []
+        for item in msgs:
+            if isinstance(item, BaseMessage):
+                coerced.append(item)
+                continue
+            if isinstance(item, dict):
+                role = item.get("role")
+                content = item.get("content", "")
+                if role == "user":
+                    coerced.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    # Note: tool_calls not reconstructed here; if present, it's already BaseMessage upstream
+                    coerced.append(AIMessage(content=content))
+                elif role == "system":
+                    coerced.append(SystemMessage(content=content))
+                elif role == "tool":
+                    coerced.append(
+                        ToolMessage(
+                            content=str(content),
+                            tool_call_id=item.get("tool_call_id", ""),
+                            name=item.get("name"),
+                        )
+                    )
+        return coerced
+
+    def _sanitize_messages(self, history: list[BaseMessage]) -> list[BaseMessage]:
+        """Remove assistant messages with tool_calls that are not immediately followed by a ToolMessage.
+
+        This prevents OpenAI 400 errors when an orphan tool_call appears in the trimmed history.
+        """
+        if not history:
+            return history
+        sanitized: list[BaseMessage] = []
+        i = 0
+        n = len(history)
+        while i < n:
+            msg = history[i]
+            has_tool_calls = isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None)
+            if has_tool_calls:
+                next_is_tool = (i + 1 < n) and isinstance(history[i + 1], ToolMessage)
+                if not next_is_tool:
+                    # Skip this orphan tool_call message
+                    i += 1
+                    continue
+            sanitized.append(msg)
+            i += 1
+        return sanitized
 
     async def get_stream_response(self, messages: list[Message], session_id: str):
         
@@ -293,7 +349,7 @@ class IanGraph:
                     # 🔍 DEBUG : Voir la structure de l'event
                     print(f"Event reçu: {event}\n")
                     print(f"Event type: {event_type}\n")
-                    print(f"Event data keys: {event.get('data', {}).keys()}")
+                    # print(f"Event data keys: {event.get('data', {}).keys()}")
                     
                     # ✅ APRÈS (sécurisé) - Vérifier AVANT d'accéder
                     if event_type in ("on_llm_stream","on_chat_model_stream") and "chunk" in event.get("data", {}):
@@ -301,11 +357,42 @@ class IanGraph:
                         payload = {"type": "content", "content": chunk_content}
                         yield f"data: {json.dumps(payload)}\n\n"
                     # elif event_type == "on_chat_model_stream":
+                    
+                    
+                    elif event_type == "on_chat_model_end":
+                        data = event.get("data", {})
+                        output = data.get("output")
+                        if output and hasattr(output, "tool_calls"):
+                            tool_calls = output.tool_calls
+                            payload = {"type": "tool_calls", "tool_calls": tool_calls}
+                            yield f"data: {json.dumps(payload)}\n\n"
                         
-                    # elif event_type == "on_tool_start":
-                    #     tools_call = event["data"]["output"].tool_calls if hasattr(event["data"]["output"], "tool_calls") else []
-                    #     print(f"Tool start event: {event}")
-                    elif event_type in ("end","on_chat_model_end") or (
+                    elif event_type == "on_tool_start":
+                        data = event.get("data", {})
+                        # certains événements ont 'name' et 'tool_input' directement
+                        tool_name = data.get("name") or getattr(data.get("output"), "tool_name", "unknown")
+                        tool_args = data.get("tool_input") or getattr(data.get("output"), "tool_input", {})
+                        payload = {
+                            "type": "tool_start",
+                            "tool": tool_name,
+                            "args": tool_args,
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    
+                    elif event_type == "on_tool_end":
+                        data = event.get("data", {})
+                        tool_name = data.get("name") or getattr(data.get("output"), "tool_name", None)
+                        result = data.get("result") or getattr(data.get("output"), "result", None)
+                        if result is not None:
+                            payload = {
+                                "type": "tool_end",
+                                "tool": tool_name,
+                                "result": result,
+                            }
+                            yield f"data: {json.dumps(payload)}\n\n"                  
+                        
+                    
+                    elif event_type == "end" or (
                         event_type == "on_chain_end" and event.get("name") == "LangGraph"
                     ):
                         yield f"data: {json.dumps({'type': '[DONE]'})}\n\n"
@@ -392,7 +479,7 @@ class IanGraph:
         try:
             graph_builder.add_node("chatbot", self._chat)
             # graph_builder.add_node("human_verif", human_pref_validator)
-            graph_builder.add_node("tools", tool_node)
+            graph_builder.add_node("tools",tool_node)
             logger.info("Nodes ajoutés avec succès")
         except Exception as e:
             logger.error(f"Erreur ajout des nodes: {e}")
@@ -426,20 +513,75 @@ class IanGraph:
             
             logger.info(f"lenght of state.messages: {len(state.messages)}")
 
-            messages = prepare_messages(
-                state.messages,
-                self.llm,
-                "You are a helpful assistant that can search for listings and provide information about them.",
+            # Build safe history: preserve ToolMessages, remove orphan tool_calls
+            history = self._coerce_messages(state.messages)
+            history = self._sanitize_messages(history)
+
+            system_msg = SystemMessage(
+                content="You are a helpful assistant that can search for listings and provide information about them."
             )
+            llm_input: list[BaseMessage] = [system_msg] + history
 
             logger.info("Message ajouté au state")
             logger.info("=== FIN CHATBOT ===")
-            generated_state = {
-                "messages": [await self.llm.ainvoke(dump_messages(messages))]
-            }
-            return generated_state
+
+            ai_msg = await self.llm.ainvoke(llm_input)
+            return {"messages": [ai_msg]}
 
         except Exception as e:
             logger.error(f"Erreur dans chatbot: {e}")
             logger.error(f"Traceback:", exc_info=True)
             raise
+        
+    
+    async def tools_router(self,state: GraphState):
+        logger.info(f"=== DÉBUT TOOLS_ROUTER ===")
+        
+        last_message = state["messages"][-1]
+        
+        if(hasattr(last_message, "tool_calls" and len(last_message.tool_calls) > 0)):
+            logger.info(f"Tool calls detected: {last_message.tool_calls}")
+            return "tool_node"
+        else: 
+            logger.info(f"No tool calls detected")
+            return END
+            
+            
+    async def custom_tool_node(self,state: GraphState):
+        """custom handle that handle tool calls from the LLm"""
+        logger.info(f"=== DÉBUT CUSTOM_TOOL_NODE ===")
+        tool_calls = state["messages"][-1].tool_calls
+        
+        # Initialize list to store tool messaes
+        tool_messages = []
+        
+        #process each tool call
+        for tool_call in tool_calls:
+            logger.info(f"Processing tool call: {tool_call}")
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            tool_id = tool_call["id"]
+            
+            if tool_name == "search_listing":
+                logger.info(f"Processing search_listing tool call: {tool_args}")
+                args = dict(tool_args)
+                if "session_id" not in args:
+                    args["session_id"] = state.session_id
+
+                search_results = await search_listing.ainvoke(args)
+
+                tool_message = ToolMessage(
+                    content=json.dumps(search_results),
+                    tool_call_id=tool_id,
+                    name=tool_name,
+                )
+
+                tool_messages.append(tool_message)
+        
+        return {"messages": tool_messages}
+                
+                
+               
+        
+        
+        

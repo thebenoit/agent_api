@@ -347,8 +347,8 @@ class IanGraph:
                     event_type = event["event"]
                     
                     # 🔍 DEBUG : Voir la structure de l'event
-                    print(f"Event reçu: {event}\n")
-                    print(f"Event type: {event_type}\n")
+                    #print(f"Event reçu: {event}\n")
+                    # print(f"Event type: {event_type}\n")
                     # print(f"Event data keys: {event.get('data', {}).keys()}")
                     
                     # ✅ APRÈS (sécurisé) - Vérifier AVANT d'accéder
@@ -380,16 +380,29 @@ class IanGraph:
                         yield f"data: {json.dumps(payload)}\n\n"
                     
                     elif event_type == "on_tool_end":
+                        print(f"Event reçu: {event}\n")
                         data = event.get("data", {})
-                        tool_name = data.get("name") or getattr(data.get("output"), "tool_name", None)
-                        result = data.get("result") or getattr(data.get("output"), "result", None)
-                        if result is not None:
-                            payload = {
-                                "type": "tool_end",
-                                "tool": tool_name,
-                                "result": result,
-                            }
-                            yield f"data: {json.dumps(payload)}\n\n"                  
+                        # L'objet output contient la ToolMessage avec JSON dans content
+                        output: ToolMessage = data.get("output")
+                        if output:
+                            # Émettre d'abord l'événement tool_end
+                            payload = {"type": "tool_end", "tool": output.name, "result": output.content}
+                            yield f"data: {json.dumps(payload)}\n\n"
+                            # Puis parser le JSON de output.content
+                            try:
+                                result_data = json.loads(output.content)
+                                print(f"result_data reçu: {result_data}\n")
+                                if result_data.get("status") in ("queued", "processing") and result_data.get("job_id"):
+                                    job_payload = {
+                                        "type": "job",
+                                        "job_id": result_data["job_id"],
+                                        "status": result_data["status"],
+                                        "estimated_wait": result_data.get("estimated_wait"),
+                                    }
+                                    print(f"job_payload reçu: {job_payload}\n")
+                                    yield f"data: {json.dumps(job_payload)}\n\n"
+                            except Exception as e:
+                                print(f"Erreur parsing output.content: {e}")
                         
                     
                     elif event_type == "end" or (

@@ -109,7 +109,7 @@ class ScrapingWorker:
         job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
 
         try:
-            logger.info(f"Worker démarré pour user {user_id[:8]}")
+            logger.info(f"Worker démarré pour user {user_id[:8]}\n")
             self._publish_event(job_id, "start", {"message": "Démarrage du scraping"})
             self._init_scraper()
 
@@ -140,15 +140,21 @@ class ScrapingWorker:
             selected_place = random.choice(places_results["places"])
             lat = selected_place["location"]["latitude"]
             lon = selected_place["location"]["longitude"]
+            
+            payload = {
+                "status": "processing",
+                "message": f"Scraping en cours pour {city}",
+                "coordinates": {"lat": lat, "lon": lon}    
+            }
 
             self._publish_event(
-                job_id, "progress", {"message": f"Coordonnées trouvées"}
+                job_id, "progress", payload
             )
 
             # 2. Scraping Facebook avec ThreadPoolExecutor
-            logger.info(f"[{job_id}] Coordonnées: lat={lat}, lon={lon}")
+            logger.info(f"[{job_id}] Coordonnées: lat={lat}, lon={lon}\n")
 
-            logger.info(f"[{job_id}] Début scraping Facebook")
+            logger.info(f"[{job_id}] Début scraping Facebook\n")
 
             # Utiliser le ThreadPool pour le scraping concurrent
             future = self.thread_pool.submit(
@@ -161,13 +167,14 @@ class ScrapingWorker:
                 max_bedrooms,
                 user_id,
                 enrich_top_k,
+                job_id,  # pass job_id for progress callback
             )
 
             try:
                 listings = future.result(
-                    timeout=60
+                    timeout=90
                 )  # timeout 25s pour laisser 5s de marge
-                logger.info(f"[{job_id}] Scraping terminé: {len(listings)} listings")
+                logger.info(f"[{job_id}] Scraping terminé: {len(listings)} listings\n")
 
                 # Mettre en cache le résultat
                 cache_key = self.search_service._generate_cache_key(search_params)
@@ -183,7 +190,7 @@ class ScrapingWorker:
 
                 self.jobs_processed += 1
                 elapsed = time.time() - start_time
-                logger.info(f"[{job_id}] Job terminé en {elapsed:.2f}s")
+                logger.info(f"[{job_id}] Job terminé en {elapsed:.2f}s\n")
                 payload = {
                     "status": "success",
                     "listings": listings,
@@ -233,18 +240,26 @@ class ScrapingWorker:
         max_bedrooms: int,
         user_id: str,
         enrich_top_k: int,
+        job_id: str,
     ) -> List[dict[str, Any]]:
         """
         Scraping Facebook de manière synchrone (appelé par ThreadPoolExecutor).
         cette méthode s'exécute dans un thread séparé
         """
         try:
+            # define progress callback to publish SSE
+            def progress_cb(event: str, payload: dict):
+                try:
+                    self._publish_event(job_id, event, payload)
+                except Exception:
+                    logger.warning(f"[{job_id}] progress publish failed")
             # créer un event loop pour ce thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
             try:
-                # Exécuter le scraping asynchrone
+
+                # Exécuter le scraping asynchrone avec progress callback
                 result = loop.run_until_complete(
                     self.facebook_scraper.execute_async(
                         lat,
@@ -256,12 +271,23 @@ class ScrapingWorker:
                         user_id,
                         [],
                         top_k=enrich_top_k,
+                        progress=progress_cb,
                     )
                 )
                 return result or []
 
-            finally:
-                loop.close()
+            except Exception as e:
+                logger.error(f"Erreur dans _scrape_facebook_sync: {e}")
+                error_payload = {
+                    "error": str(e),
+                    "message": "Erreur lors du scraping Facebook asynchrone",
+                    "timestamp": datetime.now().isoformat(),
+                    "retry_possible": True,
+                }
+                rq_job = get_current_job()
+                job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
+                self._publish_event(job_id, "error", error_payload)
+                return []
 
         except Exception as e:
             logger.error(f"Erreur dans _scrape_facebook_sync: {e}")
@@ -271,6 +297,8 @@ class ScrapingWorker:
                 "timestamp": datetime.now().isoformat(),
                 "retry_possible": True,
             }
+            rq_job = get_current_job()
+            job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
             self._publish_event(job_id, "error", error_payload)
             return []
 

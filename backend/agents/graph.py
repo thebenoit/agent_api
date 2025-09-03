@@ -109,9 +109,9 @@ async def search_listing(
 
     """
     logger.info(f"=== DÉBUT SEARCH_LISTING ===")
-    logger.info(
-        f"Paramètres reçus: city={city}, min_bedrooms={min_bedrooms}, max_bedrooms={max_bedrooms}, min_price={min_price}, max_price={max_price}, location_near={location_near}, enrich_top_k={enrich_top_k}"
-    )
+    # logger.info(
+    #     f"Paramètres reçus: city={city}, min_bedrooms={min_bedrooms}, max_bedrooms={max_bedrooms}, min_price={min_price}, max_price={max_price}, location_near={location_near}, enrich_top_k={enrich_top_k}"
+    # )
 
     try:
         if not search_service:
@@ -139,10 +139,10 @@ async def search_listing(
             session_id,
         )
 
-        logger.info(f"Résultat SearchService: {result}")
+        logger.info(f"Résultat SearchService: {result}\n")
 
         if result["status"] == "cached":
-            logger.info("✅ Cache hit - Réponse instantanée")
+            logger.info("✅ Cache hit - Réponse instantanée\n")
             return {
                 "status": "success",
                 "data": result["data"],
@@ -151,7 +151,7 @@ async def search_listing(
             }
         elif result["status"] == "queued":
             # 📋 JOB EN QUEUE : Non-bloquant !
-            logger.info("📋 Job mis en queue - Non-bloquant")
+            logger.info("📋 Job mis en queue - Non-bloquant\n")
             return {
                 "status": "queued",
                 "job_id": result["job_id"],
@@ -161,7 +161,7 @@ async def search_listing(
             }
         elif result["status"] == "processing":
             # ⏳ JOB EN COURS : Déjà lancé
-            logger.info("⏳ Job déjà en cours")
+            logger.info("⏳ Job déjà en cours\n")
             return {
                 "status": "processing",
                 "job_id": result["job_id"],
@@ -171,7 +171,7 @@ async def search_listing(
 
         elif result["status"] == "completed":
             # ✅ JOB TERMINÉ : Résultat disponible
-            logger.info("✅ Job terminé - Résultat disponible")
+            logger.info("✅ Job terminé - Résultat disponible\n")
             return {
                 "status": "success",
                 "data": result["data"],
@@ -179,7 +179,7 @@ async def search_listing(
             }
         elif result["status"] == "rate_limited":
             # 🚫 RATE LIMIT : Trop de requêtes
-            logger.warning("🚫 Rate limit dépassé")
+            logger.warning("🚫 Rate limit dépassé\n")
             return {
                 "status": "rate_limited",
                 "message": result["message"],
@@ -188,7 +188,7 @@ async def search_listing(
 
         else:
             # ❌ ERREUR : Gestion d'erreur
-            logger.error(f"❌ Statut inattendu: {result}")
+            logger.error(f"❌ Statut inattendu: {result}\n")
             return {
                 "status": "error",
                 "message": result.get("message", "Erreur inconnue"),
@@ -196,7 +196,7 @@ async def search_listing(
             }
 
     except Exception as e:
-        logger.error(f"Erreur dans search_listing: {e}")
+        logger.error(f"Erreur dans search_listing: {e}\n")
         logger.error(f"Traceback:", exc_info=True)
         return {
             "status": "error",

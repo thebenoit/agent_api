@@ -12,6 +12,19 @@ from pydantic import (
     field_validator,
 )
 
+class Listing(BaseModel):
+    """Listing model for chat endpoint.
+    """
+    id: str = Field(..., description="The ID of the listing")
+    title: str = Field(..., description="The title of the listing")
+    price: str = Field(..., description="The price of the listing")
+    images: List[str] = Field(..., description="The images of the listing")
+    bedrooms: int = Field(..., description="The number of bedrooms of the listing")
+    bathrooms: int = Field(..., description="The number of bathrooms of the listing")
+    area: int = Field(..., description="The area of the listing")
+    location: str = Field(..., description="The location of the listing")
+    description: str = Field(..., description="The description of the listing")
+    url: str = Field(..., description="The URL of the listing")
 
 class Message(BaseModel):
     """Message model for chat endpoint.

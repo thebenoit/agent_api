@@ -81,6 +81,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         minBedrooms: int,
         maxBedrooms: int,
         user_id: str,
+       
     ) -> Any:
 
         self.listings = []
@@ -100,6 +101,7 @@ class SearchFacebook(BaseTool, BaseScraper):
             self.scrape(inputs["lat"], inputs["lon"], inputs, user_id)
         )
         if not listings:
+            listings = []
             print("Aucune annonce trouvée: ")
             # print("listings: ", listings)
 
@@ -119,6 +121,8 @@ class SearchFacebook(BaseTool, BaseScraper):
         top_k: int = 3,
         concurrency: int = 3,
         timeout_sec: float = 30.0,
+        progress=None,
+        **kwargs,
     ) -> Any:
         logger.info(
             "[execute_async] start lat=%.5f lon=%.5f price=[%s,%s] beds=[%s,%s] top_k=%s conc=%s timeout=%ss",
@@ -132,6 +136,10 @@ class SearchFacebook(BaseTool, BaseScraper):
             concurrency,
             timeout_sec,
         )
+        # Notify initial progress
+        if progress:
+            progress("progress", {"message": "Initialisation du scraping Facebook"})
+        
 
         # Exécuter la collecte synchrone existante dans un thread
         def _run_sync():
@@ -144,6 +152,10 @@ class SearchFacebook(BaseTool, BaseScraper):
             "[execute_async] base listings récupérés: %d",
             len(listings) if isinstance(listings, list) else -1,
         )
+        
+        # if progress:
+        #     progress("progress", {"count": len(listings)})
+ 
         if not listings:
             return []
 
@@ -363,29 +375,21 @@ class SearchFacebook(BaseTool, BaseScraper):
     def init_session(
         self, user_id, session, lat, lon, minBudget, maxBudget, minBedrooms, maxBedrooms
     ):
-        print("init_session")
-
-        print("user_id: ", user_id)
-        print("lat: ", lat)
-        print("lon: ", lon)
-        print("minBudget: ", minBudget)
-        print("maxBudget: ", maxBudget)
-        print("minBedrooms: ", minBedrooms)
-        print("maxBedrooms: ", maxBedrooms)
+        logger.info("init_session")
 
         headers, payload, resp_body = FacebookSessionModel().init_fb_session(user_id)
 
         # si le headers n'est pas trouvé
         if headers is None:
-            print("no headers found in doc")
+            logger.info("no headers found in doc\n")
             try:
-                print("on récupère le headers")
+                logger.info("on récupère le headers\n")
 
                 return None, None, None
 
             except Exception as e:
-                print(
-                    f"Erreur lors de l'obtention de la première requête : {e} header: {headers}"
+                logger.info(
+                    f"Erreur lors de l'obtention de la première requête : {e} header: {headers}\n"
                 )
 
         self.load_fb_headers(headers, session)
@@ -415,104 +419,6 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return headers, payload, variables
 
-    def add_listings(self, body):
-        print("cherche les listings...")
-        try:
-            edges = body["data"]["viewer"]["marketplace_rentals_map_view_stories"][
-                "edges"
-            ]
-            print(f"🔍 Nombre d'edges trouvées: {len(edges)}")
-
-            for node in body["data"]["viewer"]["marketplace_rentals_map_view_stories"][
-                "edges"
-            ]:
-                if (
-                    "for_sale_item" in node["node"]
-                    and "id" in node["node"]["for_sale_item"]
-                ):
-                    print("FOR SALE ITEM FOUND")
-                    listing_id = node["node"]["for_sale_item"]["id"]
-                    # Early duplicate check to avoid unnecessary processing
-                    if listing_id in self.seen_listing_ids:
-                        continue
-                    self.seen_listing_ids.add(listing_id)
-                    # Utiliser listing_id comme _id dans le document
-                    # data = node["node"]
-
-                    # Traitement des images
-                    listing_photos = []
-                    if "listing_photos" in node["node"]["for_sale_item"]:
-                        for photo in node["node"]["for_sale_item"]["listing_photos"]:
-                            if "image" in photo:
-                                # Modifier L"URL pour obtenir l'image en haute qualité
-                                original_url = photo["image"]["uri"]
-                                # Remplacer les paramètres de taille dans l'URL
-                                # hq_url = original_url.split('?')[0] + "?width=1080&height=1080&quality=original"
-
-                                listing_photos.append(
-                                    {
-                                        "id": photo.get("id", ""),
-                                        "uri": original_url,
-                                    }
-                                )
-
-                    # Extraire et nettoyer le prix pour le convertir en valeur numérique
-                    price_numeric = None
-                    if (
-                        "formatted_price" in node["node"]["for_sale_item"]
-                        and "text" in node["node"]["for_sale_item"]["formatted_price"]
-                    ):
-                        price_text = node["node"]["for_sale_item"]["formatted_price"][
-                            "text"
-                        ]
-                        print(f"Prix brut extrait: '{price_text}'")
-                        # Supprimer les espaces, le symbole $ et convertir en nombre
-                        # price_numeric = self.clean_price(price_text)
-
-                        # Extraire le nombre de chambres et de salles de bain
-                    custom_title = node["node"]["for_sale_item"].get("custom_title", "")
-                    bedrooms = self.clean_bedrooms(custom_title)
-                    bathrooms = self.clean_bathrooms(custom_title)
-
-                    # Au lieu d'ajouter tout le nœud, créez un nouvel objet avec seulement les champs désirés
-                    filtered_data = {
-                        "_id": listing_id,
-                        "scraped_at": time.time(),  # Ajoute un timestamp UNIX
-                        "budget": price_text,
-                        "bedrooms": bedrooms,
-                        "bathrooms": bathrooms,
-                        "for_sale_item": {
-                            "id": node["node"]["for_sale_item"]["id"],
-                            "marketplace_listing_title": node["node"][
-                                "for_sale_item"
-                            ].get("marketplace_listing_title", ""),
-                            "formatted_price": node["node"]["for_sale_item"].get(
-                                "formatted_price", {}
-                            ),
-                            "location": node["node"]["for_sale_item"].get(
-                                "location", {}
-                            ),
-                            "custom_title": node["node"]["for_sale_item"].get(
-                                "custom_title", ""
-                            ),
-                            "custom_sub_titles_with_rendering_flags": node["node"][
-                                "for_sale_item"
-                            ].get("custom_sub_titles_with_rendering_flags", []),
-                            "listing_photos": listing_photos,
-                            "share_uri": node["node"]["for_sale_item"].get(
-                                "share_uri", ""
-                            ),
-                        },
-                    }
-                    # Ajoute directement (déjà filtré par set)
-                    print("Ajout de data--------->:")
-                    # print("filtered_data: \n", filtered_data)
-                    self.listings.append(filtered_data)
-                # else:
-                # print("no for_sale_item found")
-        except KeyError as e:
-            print(f"Erreur de structure dans le body : {e}")
-
     def add_feed_listings(self, body):
         """
         Traite les données du feed marketplace et extrait les informations importantes des listings.
@@ -528,7 +434,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         try:
             # Accéder aux edges du feed
             edges = body["data"]["viewer"]["marketplace_feed_stories"]["edges"]
-            print(f"✅ Nombre d'edges trouvées: {len(edges)}")
+            print(f"✅ Nombre d'edges trouvées(feed): {len(edges)}")
 
             for edge in edges:
                 node = edge["node"]
@@ -620,12 +526,13 @@ class SearchFacebook(BaseTool, BaseScraper):
                     # Ajout à la liste des listings
                     listings.append(filtered_data)
                     print(f"✅ Listing ajouté: {title} - {price_text} - {city}")
-                    return listings
+        
 
                 else:
                     print(
                         f"⚠️ Type de node non reconnu: {node.get('__typename')} - {node.get('story_type')}"
                     )
+            return listings
 
         except KeyError as e:
             print(f"❌ Erreur de structure dans le body: {e}")
@@ -834,7 +741,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return page_info
 
-    async def scrape(self, lat, lon, query, user_id: str):
+    async def scrape(self, lat, lon, query, user_id: str, progress=None):
         print("Initialisation de fb_graphql_call...")
 
         for attempt in range(self.max_retries):
@@ -866,16 +773,20 @@ class SearchFacebook(BaseTool, BaseScraper):
                     minBedrooms,
                     maxBedrooms,
                 )
+                
+
 
                 if headers is None or payload is None:
-                    print(
+                    logger.info(
                         f"Session non initialisée pour user {user_id}, tentative {attempt + 1}"
                     )
                     if attempt < self.max_retries - 1:
                         sleep_time = (
                             self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                         )
-                        print(f"Nouvelle tentative dans {sleep_time} secondes...")
+                        if progress:
+                            progress("progress", {"message": f"Nouvelle tentative dans..."})
+                        logger.info(f"Nouvelle tentative dans {sleep_time} secondes...")
                         time.sleep(sleep_time)
                         continue
                     else:
@@ -888,6 +799,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                     "https://www.facebook.com/api/graphql/",
                     data=urllib.parse.urlencode(payload),
                 )
+                logger.info(f"[DEBUG] GraphQL Response status={resp_body.status_code}\n")
 
                 # Vérifier que la réponse contient les bonnes données avec boucle while
                 try:
@@ -922,39 +834,45 @@ class SearchFacebook(BaseTool, BaseScraper):
                         and "marketplace_feed_stories"
                         not in resp_body.json().get("data", {}).get("viewer", {})
                     ):
-                        print(
+                        logger.info(
                             "Impossible d'obtenir les données valides après toutes les tentatives internes"
                         )
                         raise RuntimeError(
                             "Données invalides après tentatives internes"
                         )
 
-                    print("Données GraphQL récupérées avec succès")
+                    logger.info("Données GraphQL récupérées avec succès")
 
                     # Traiter les données selon leur type
                     response_data = resp_body.json()
                     viewer_data = response_data.get("data", {}).get("viewer", {})
 
-                    if "marketplace_rentals_map_view_stories" in viewer_data:
-                        print("📍 Traitement des données de la carte (map)")
-                        listings = self.add_listings(response_data)
-                    elif "marketplace_feed_stories" in viewer_data:
-                        print("📰 Traitement des données du feed")
+
+                    if "marketplace_feed_stories" in viewer_data:
+                        logger.info("📰 Traitement des données du feed")
                         listings = self.add_feed_listings(response_data)
                     else:
-                        print("⚠️ Type de données non reconnu")
-
+                        logger.info("⚠️ Type de données non reconnu")
+                        
+                    if not listings and attempt < self.max_retries - 1:
+                        logger.info(
+                            f"Aucune annonce trouvée (tentative {attempt+1}), "
+                            f"nouvelle tentative dans {self.retry_delay}s"
+                        )
+                        time.sleep(self.retry_delay)
+                        continue
+                    logger.info(f"Listings récupérés: {len(listings)}")
                     return listings
 
                 except Exception as e:
-                    print(f"Erreur lors de la vérification des données: {e}")
+                    logger.info(f"Erreur lors de la vérification des données: {e}")
                     raise
 
             except KeyError as e:
                 logger.error(f"Clé manquante dans la session pour user {user_id}: {e}")
                 if attempt < self.max_retries - 1:
                     sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
-                    print(f"Nouvelle tentative dans {sleep_time} secondes...")
+                    logger.info(f"Nouvelle tentative dans {sleep_time} secondes...")
                     time.sleep(sleep_time)
                 else:
                     raise RuntimeError(f"Invalid session data: missing key {e}")

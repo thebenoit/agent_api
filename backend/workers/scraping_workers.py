@@ -119,7 +119,7 @@ class ScrapingWorker:
             min_price = search_params.get("min_price", 0)
             max_price = search_params.get("max_price", 10000)
             location_near = search_params.get("location_near", [])
-            enrich_top_k = search_params.get("enrich_top_k", 3)
+            enrich_top_k = search_params.get("enrich_top_k", 10)
 
             logger.info(f"[{job_id}] Recherche de Google Places {city}")
             places_results = self.google_places.execute(city, location_near)

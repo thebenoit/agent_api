@@ -64,8 +64,16 @@ class OnePage(BaseTool, BaseScraper):
                     "type": "nested_list",
                     "fields": [
                         {
-                            "name": "thumbnails",
-                            "selector": "div[aria-label*='Thumbnail'], div[aria-label*='Vignette']",
+                            # Cibler uniquement la galerie/carrousel du listing
+                            "name": "gallery",
+                            "selector": (
+                                "[aria-roledescription='carousel'], "
+                                "[aria-label*='Carousel'], "
+                                "[aria-label*='Carrousel'], "
+                                "[aria-label*='Photos'], "
+                                "[aria-label*='Miniature'], "
+                                "div[role='region'][aria-label*='Photos']"
+                            ),
                             "type": "nested_list",
                             "fields": [
                                 {
@@ -200,25 +208,71 @@ class OnePage(BaseTool, BaseScraper):
                 else:
                     return {"html": result.html} if return_raw_html else {}
 
-            def to_images_list(images_node):
+            def is_image_url(url: str) -> bool:
+                if not isinstance(url, str):
+                    return False
+                ul = url.lower()
+                return (
+                    any(ext in ul for ext in [".jpg", ".jpeg", ".png", ".webp"]) or
+                    "safe_image.php" in ul
+                )
+
+            def to_images_list(images_node, title=None):
+                """Normalise la structure extraite par JsonCssExtractionStrategy et filtre par titre.
+
+                Args:
+                    images_node: La structure d'images extraite
+                    title: Si fourni, ne garde que les images dont l'alt correspond au titre
+
+                Attend typiquement une structure du type:
+                images: [ { gallery: [ {src, alt}, ... ] } ]
+
+                Mais gère aussi les anciens formats (thumbnails) et
+                une liste directe de {src, alt}.
+                """
                 normalized = []
                 if isinstance(images_node, dict):
                     images_node = [images_node]
                 if isinstance(images_node, list):
                     for entry in images_node:
-                        thumbs = (
-                            entry.get("thumbnails") if isinstance(entry, dict) else None
-                        )
+                        if not isinstance(entry, dict):
+                            continue
+                        # Nouveau format: gallery
+                        gallery = entry.get("gallery")
+                        if isinstance(gallery, dict):
+                            gallery = [gallery]
+                        if isinstance(gallery, list):
+                            for item in gallery:
+                                if isinstance(item, dict):
+                                    src = item.get("src")
+                                    alt = item.get("alt")
+                                    if src and is_image_url(src):
+                                        # Vérifie si l'alt correspond au titre si un titre est fourni
+                                        if title is None or (alt and alt.strip().lower() == title.strip().lower()):
+                                            normalized.append({"src": src, "alt": alt})
+
+                        # Ancien format: thumbnails
+                        thumbs = entry.get("thumbnails")
                         if isinstance(thumbs, dict):
                             thumbs = [thumbs]
                         if isinstance(thumbs, list):
                             for t in thumbs:
-                                if not isinstance(t, dict):
-                                    continue
-                                src = t.get("src")
-                                alt = t.get("alt")
-                                if src:
-                                    normalized.append({"src": src, "alt": alt})
+                                if isinstance(t, dict):
+                                    src = t.get("src")
+                                    alt = t.get("alt")
+                                    if src and is_image_url(src):
+                                        if title is None or (alt and alt.strip().lower() == title.strip().lower()):
+                                            normalized.append({"src": src, "alt": alt})
+
+                        # Si l'entrée est déjà un dict {src, alt}
+                        if entry.get("src") and is_image_url(entry.get("src")):
+                            src = entry.get("src")
+                            alt = entry.get("alt")
+                            if title is None or (alt and alt.strip().lower() == title.strip().lower()):
+                                normalized.append({
+                                    "src": src,
+                                    "alt": alt,
+                                })
                 return normalized
 
             description = None
@@ -244,7 +298,7 @@ class OnePage(BaseTool, BaseScraper):
                         if description is None:
                             description = texts_sorted[0]
 
-                images = to_images_list(extracted.get("images"))
+                images = to_images_list(extracted.get("images"), title=description)
             else:
                 images = []
 
@@ -269,26 +323,42 @@ class OnePage(BaseTool, BaseScraper):
                                 description = span_texts[0]
 
                     if not images:
+                        # Restreindre la recherche au conteneur de galerie/carrousel
+                        main = soup.select_one("div[role='main']") or soup
+                        # Chercher une vraie galerie
+                        gallery = main.select_one(
+                            "[aria-roledescription='carousel'], "
+                            "[aria-label*='Carousel'], "
+                            "[aria-label*='Carrousel'], "
+                            "[aria-label*='Photos'], "
+                            "div[role='region'][aria-label*='Photos']"
+                        )
+
+                        # Ou bien, Facebook utilise souvent des 'Miniature N'
+                        thumbnails = main.select("[aria-label*='Miniature']")
+
                         imgs = []
-                        for img in soup.select("div[role='main'] img"):
-                            src = img.get("src")
-                            if not src and img.get("srcset"):
-                                # prendre la plus grande dans srcset
-                                try:
-                                    parts = [
-                                        p.strip() for p in img.get("srcset").split(",")
-                                    ]
-                                    if parts:
-                                        src = parts[-1].split(" ")[0]
-                                except Exception:
-                                    pass
-                            if src and (
-                                "fbcdn" in src
-                                or "scontent" in src
-                                or "safe_image.php" in src
-                            ):
-                                alt = img.get("alt")
-                                imgs.append({"src": src, "alt": alt})
+                        if gallery:
+                            scopes = [gallery]
+                        elif thumbnails:
+                            scopes = thumbnails
+                        else:
+                            scopes = [main]
+
+                        for scope in scopes:
+                            for img in scope.select("img"):
+                                src = img.get("src")
+                                if not src and img.get("srcset"):
+                                    # prendre la plus grande dans srcset
+                                    try:
+                                        parts = [p.strip() for p in img.get("srcset").split(",")]
+                                        if parts:
+                                            src = parts[-1].split(" ")[0]
+                                    except Exception:
+                                        pass
+                                if src and is_image_url(src):
+                                    alt = img.get("alt")
+                                    imgs.append({"src": src, "alt": alt})
                         # dédoublonner par src
                         seen = set()
                         images = []

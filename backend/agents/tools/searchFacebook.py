@@ -118,7 +118,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         user_id: str,
         listings: list,
         *,
-        top_k: int = 3,
+        top_k: int = 5,
         concurrency: int = 3,
         timeout_sec: float = 30.0,
         progress=None,

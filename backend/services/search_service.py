@@ -53,7 +53,7 @@ class SearchService:
             "min_price": int(search_params.get("min_price", 0)),
             "max_price": int(search_params.get("max_price", 0)),
             "location_near": sorted([str(x).lower().strip() for x in location_near]),
-            "enrich_top_k": int(search_params.get("enrich_top_k", 3)),
+            "enrich_top_k": int(search_params.get("enrich_top_k", 10)),
         }
 
         # Hash SHA-256 pour une clé unique et sécurisée

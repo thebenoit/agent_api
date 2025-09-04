@@ -232,14 +232,7 @@ async def chat_stream(message: str, req: Request):
     
     checkpointer_id = req.state.user_id
     
-    if checkpointer_id is None:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": "Utilisateur non trouvé",
-                "message": "L'utilisateur n'existe plus dans la base de données",
-                },
-            )
+
     msg = Message(role="user", content=message)
     
     return StreamingResponse(

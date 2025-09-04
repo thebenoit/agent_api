@@ -445,16 +445,9 @@ class SearchFacebook(BaseTool, BaseScraper):
                     and node.get("story_type") == "LISTING"
                     and "listing" in node
                 ):
-
+                    logger.info(f"Listing trouvée!")
                     listing = node["listing"]
                     listing_id = listing.get("id")
-
-                    # Vérification des doublons
-                    # if listing_id in self.seen_listing_ids:
-                    #     continue
-                    # self.seen_listing_ids.add(listing_id)
-
-                    print(f"📋 Traitement du listing: {listing_id}")
 
                     # Extraction des informations essentielles
                     title = listing.get("marketplace_listing_title", "")
@@ -521,11 +514,11 @@ class SearchFacebook(BaseTool, BaseScraper):
                         },
                     }
 
-                    print("filtered_data: ", filtered_data)
+                    #print("filtered_data: ", filtered_data)
 
                     # Ajout à la liste des listings
                     listings.append(filtered_data)
-                    print(f"✅ Listing ajouté: {title} - {price_text} - {city}")
+                    logger.info(f"✅ Listing ajouté: {title} - {price_text} - {city}")
         
 
                 else:

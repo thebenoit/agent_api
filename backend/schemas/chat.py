@@ -13,7 +13,7 @@ from pydantic import (
 )
 
 class Listing(BaseModel):
-    """Listing model for chat endpoint.
+    """Listing model for chat endpoint.w
     """
     id: str = Field(..., description="The ID of the listing")
     title: str = Field(..., description="The title of the listing")

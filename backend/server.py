@@ -20,6 +20,8 @@ import atexit
 import logging
 import asyncio
 import redis
+from rq import Queue
+from workers.fb_session_worker import create_fb_session_job
 from langchain_core.callbacks.manager import AsyncCallbackManager
 from langchain_core.callbacks.base import AsyncCallbackHandler
 
@@ -161,6 +163,17 @@ async def get_user_info(req: Request):
         "user": req.state.user,
     }
     
+@app.post("/fb-session/enqueue/{user_id}")
+async def enqueue_fb_session(user_id: str):
+    """
+    Enqueue un job RQ pour créer ou rafraîchir la session FB pour user_id
+    """
+    redis_url = os.getenv("REDIS_URL")
+    conn = redis.from_url(redis_url, decode_responses=True)
+    queue = Queue("fb_session", connection=conn)
+    job = queue.enqueue(create_fb_session_job, user_id)
+    return {"enqueued": True, "job_id": job.id}
+
     
 
 

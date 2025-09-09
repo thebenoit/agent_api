@@ -139,6 +139,9 @@ class SearchFacebook(BaseTool, BaseScraper):
         # Notify initial progress
         if progress:
             progress("progress", {"message": "Initialisation du scraping Facebook"})
+            
+            
+        
         
 
         # Exécuter la collecte synchrone existante dans un thread
@@ -158,6 +161,9 @@ class SearchFacebook(BaseTool, BaseScraper):
  
         if not listings:
             return []
+        
+        if progress:
+            progress("progress", {"message": "Enrichissement des listings..."})
 
         onepage = OnePage()
         sem = asyncio.Semaphore(concurrency)

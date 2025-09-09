@@ -21,6 +21,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.tools.searchFacebook import SearchFacebook
 from agents.tools.googlePlaces import GooglePlaces
 from services.search_service import SearchService
+from models.fb_sessions import FacebookSessionModel
+from sessionManager import SessionsManager
 
 load_dotenv()
 
@@ -140,16 +142,14 @@ class ScrapingWorker:
             selected_place = random.choice(places_results["places"])
             lat = selected_place["location"]["latitude"]
             lon = selected_place["location"]["longitude"]
-            
+
             payload = {
                 "status": "processing",
                 "message": f"Scraping en cours pour {city}",
-                "coordinates": {"lat": lat, "lon": lon}    
+                "coordinates": {"lat": lat, "lon": lon},
             }
 
-            self._publish_event(
-                job_id, "progress", payload
-            )
+            self._publish_event(job_id, "progress", payload)
 
             # 2. Scraping Facebook avec ThreadPoolExecutor
             logger.info(f"[{job_id}] Coordonnées: lat={lat}, lon={lon}\n")
@@ -230,6 +230,83 @@ class ScrapingWorker:
             self._publish_event(job_id, "error", error_payload)
             raise
 
+    def check_user_session(self, user_id: str) -> dict:
+        """
+        Vérifie et crée une session Facebook pour l'utilisateur si nécessaire.
+
+        Args:
+            user_id: Identifiant de l'utilisateur
+
+        Returns:
+            dict: Session Facebook avec headers, payload, variables
+
+        Raises:
+            Exception: Si impossible de créer/récupérer la session après 3 tentatives
+        """
+        max_retries = 3
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                # 1. Vérifier si une session existe déjà
+                session = FacebookSessionModel().get_session(user_id)
+                if session is not None:
+                    logger.info(f"[{user_id[:8]}] Session existante trouvée")
+                    return session
+
+                # 2. Pas de session, il faut la créer
+                logger.info(
+                    f"[{user_id[:8]}] Aucune session trouvée, création en cours..."
+                )
+
+                # Créer un event loop pour ce thread (comme dans _scrape_facebook_sync)
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                try:
+                    # Créer la session de manière asynchrone
+                    session_manager = SessionsManager()
+                    success = loop.run_until_complete(
+                        session_manager.create_session_for_user(user_id)
+                    )
+
+                    if success:
+                        # Vérifier que la session a bien été créée
+                        session = FacebookSessionModel().get_session(user_id)
+                        if session is not None:
+                            logger.info(f"[{user_id[:8]}] Session créée avec succès")
+                            return session
+                        else:
+                            raise Exception("Session créée mais non trouvée en base")
+                    else:
+                        raise Exception("Échec de la création de session")
+
+                finally:
+                    # Nettoyer l'event loop
+                    loop.close()
+
+            except Exception as e:
+                retry_count += 1
+                logger.warning(
+                    f"[{user_id[:8]}] Tentative {retry_count}/{max_retries} échouée: {e}"
+                )
+
+                if retry_count >= max_retries:
+                    logger.error(
+                        f"[{user_id[:8]}] Échec définitif après {max_retries} tentatives"
+                    )
+                    raise Exception(
+                        f"Impossible de créer/récupérer la session pour {user_id[:8]} après {max_retries} tentatives: {e}"
+                    )
+
+                # Attendre avant de réessayer (backoff exponentiel)
+                wait_time = 2**retry_count
+                logger.info(f"[{user_id[:8]}] Attente de {wait_time}s avant retry...")
+                time.sleep(wait_time)
+
+        # Ne devrait jamais arriver ici, mais au cas où
+        raise Exception(f"Échec inattendu pour {user_id[:8]}")
+
     def _scrape_facebook_sync(
         self,
         lat: float,
@@ -247,12 +324,23 @@ class ScrapingWorker:
         cette méthode s'exécute dans un thread séparé
         """
         try:
+            # Vérifier/créer la session Facebook AVANT le scraping
+            logger.info(
+                f"[{job_id}] Vérification de la session Facebook pour {user_id[:8]}"
+            )
+            self._publish_event(
+                job_id, "progress", {"message": "Vérification de la session Facebook"}
+            )
+            session = self.check_user_session(user_id)
+            logger.info(f"[{job_id}] Session Facebook validée pour {user_id[:8]}")
+
             # define progress callback to publish SSE
             def progress_cb(event: str, payload: dict):
                 try:
                     self._publish_event(job_id, event, payload)
                 except Exception:
                     logger.warning(f"[{job_id}] progress publish failed")
+
             # créer un event loop pour ce thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -278,11 +366,20 @@ class ScrapingWorker:
 
             except Exception as e:
                 logger.error(f"Erreur dans _scrape_facebook_sync: {e}")
+
+                # Gestion d'erreur spécifique pour les sessions
+                if "session" in str(e).lower():
+                    error_message = "Erreur de session Facebook"
+                    retry_possible = True
+                else:
+                    error_message = "Erreur lors du scraping Facebook asynchrone"
+                    retry_possible = True
+
                 error_payload = {
                     "error": str(e),
-                    "message": "Erreur lors du scraping Facebook asynchrone",
+                    "message": error_message,
                     "timestamp": datetime.now().isoformat(),
-                    "retry_possible": True,
+                    "retry_possible": retry_possible,
                 }
                 rq_job = get_current_job()
                 job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
@@ -378,7 +475,9 @@ def start_worker():
             data = json.dumps({"event": "error", "payload": error_payload}, default=str)
             redis_client.publish(channel, data)
         except Exception as publish_error:
-            logger.error(f"Erreur lors de la publication de l'événement d'erreur de démarrage: {publish_error}")
+            logger.error(
+                f"Erreur lors de la publication de l'événement d'erreur de démarrage: {publish_error}"
+            )
         sys.exit(1)
 
 

@@ -68,7 +68,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Ajouter le middleware d'authentification
 @app.middleware("http")
 async def auth_middleware_wrapper(request: Request, call_next):
-    if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi.json"):
+    if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi.json") or request.url.path.startswith("/fb-session/enqueue"):
         print("docs")
         return await call_next(request)
     

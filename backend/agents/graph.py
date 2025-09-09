@@ -132,6 +132,8 @@ async def search_listing(
         user_ip = "127.0.0.1"
         
         
+        
+        
 
         result = await search_service.search_listings(
             search_params,

@@ -15,7 +15,7 @@ from crawl4ai import (
     AsyncWebCrawler,
     BrowserConfig,
     CrawlerRunConfig,
-    UndetectedAdapter,
+    # UndetectedAdapter,
     ProxyConfig,
     RoundRobinProxyStrategy,
     CacheMode,
@@ -237,7 +237,7 @@ class SessionsManager:
             # print("browser_headers: ", browser_headers,"\n")
             # user_agent = browser_headers["User-Agent"]
 
-            undetected_adapter = UndetectedAdapter()
+            # undetected_adapter = UndetectedAdapter()
             self.proxy_strategy = RoundRobinProxyStrategy(self.proxies)
 
             browser_config = BrowserConfig(
@@ -270,7 +270,7 @@ class SessionsManager:
 
             crawler_strategy = AsyncPlaywrightCrawlerStrategy(
                 browser_config=browser_config,
-                browser_adapter=undetected_adapter,
+                # browser_adapter=undetected_adapter,
             )
 
             async with AsyncWebCrawler(
@@ -596,6 +596,8 @@ class SessionsManager:
                 f"[user {user_id[:8]}] Erreur lors de la création/mise à jour de la session: {e}"
             )
             return False
+        
+    
 
     def put_session_on_db():
         headers, body, resp_body = self.get_first_req()

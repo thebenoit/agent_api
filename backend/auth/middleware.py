@@ -42,6 +42,8 @@ async def auth_middleware(request: Request, call_next):
         token = None
         token_source = "unknown"
         
+        print("DEBUG cookies:", request.headers.get("cookie"))
+        
         # 1. D'abord dans le header Authorization (priorité haute)
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):

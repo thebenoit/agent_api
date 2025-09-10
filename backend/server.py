@@ -25,6 +25,7 @@ from rq import Queue
 from workers.fb_session_worker import create_fb_session_job
 from langchain_core.callbacks.manager import AsyncCallbackManager
 from langchain_core.callbacks.base import AsyncCallbackHandler
+from bson import ObjectId  # pour sérialiser les ObjectId
 
 
 # Configuration du logging
@@ -167,10 +168,18 @@ async def job_events(job_id: str):
 @app.get("/user/info")
 async def get_user_info(req: Request):
     """Récupère les informations de l'utilisateur authentifié"""
+    user = req.state.user
+    user_serializable = {}
+    for key, value in user.items():
+        if isinstance(value, ObjectId):
+            user_serializable[key] = str(value)
+        else:
+            user_serializable[key] = value
+
     return {
         "user_id": req.state.user_id,
         "thread_id": req.state.thread_id,
-        "user": req.state.user,
+        "user": user_serializable,
     }
 
 
@@ -184,65 +193,6 @@ async def enqueue_fb_session(user_id: str):
     queue = Queue("fb_session", connection=conn)
     job = queue.enqueue(create_fb_session_job, user_id)
     return {"enqueued": True, "job_id": job.id}
-
-
-# ... existing code ...
-
-
-@app.post("/chat")
-async def chat(request: ChatRequest, req: Request):
-    try:
-
-        user_info = req.state.user
-
-        if user_info is None:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "Utilisateur non trouvé",
-                    "message": "L'utilisateur n'existe plus dans la base de données",
-                },
-            )
-
-        dernier_message = request.messages[-1]
-
-        agent_response = await agent._get_response(
-            messages=[dernier_message],
-            session_id=user_info["_id"],
-            user_id=user_info["_id"],
-        )
-
-        result = {"response": agent_response}
-
-        if agent_response:
-            try:
-                payload = json.loads(result["content"])
-                if isinstance(payload, dict) and payload.get("job_id"):
-                    result["job_id"] = payload["job_id"]
-            except (ValueError, KeyError):
-                pass
-        return result
-
-    except NotImplementedError as e:
-        logger.error(f"Erreur NotImplementedError: {e}")
-        return JSONResponse(
-            status_code=501,
-            content={
-                "error": "Fonctionnalité non implémentée",
-                "message": "Cette fonctionnalité n'est pas encore disponible",
-                "details": str(e),
-            },
-        )
-    except Exception as e:
-        logger.error(f"Erreur générale: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Erreur interne du serveur",
-                "message": "Une erreur s'est produite lors du traitement de votre demande",
-                "details": "Veuillez réessayer plus tard",
-            },
-        )
 
 
 @app.get("/chat/stream")

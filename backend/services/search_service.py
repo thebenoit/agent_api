@@ -91,12 +91,12 @@ class SearchService:
         """
 
         # 1. Vérifier le rate limiting
-        if not self._check_rate_limit(user_ip):
-            return {
-                "status": "rate_limited",
-                "message": "Trop de requêtes. Réessayez dans 1 minute.",
-                "retry_after": 60,
-            }
+        # if not self._check_rate_limit(user_ip):
+        #     return {
+        #         "status": "rate_limited",
+        #         "message": "Trop de requêtes. Réessayez dans 1 minute.",
+        #         "retry_after": 60,
+        #     }
 
         # 2. Vérifier le cache Redis
         cache_key = self._generate_cache_key(search_params)

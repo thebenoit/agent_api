@@ -1,0 +1,24 @@
+# Dockerfile.worker (dans /Users/jerrybenoit/dev/moveout_ai/agent_api/backend)
+FROM mcr.microsoft.com/playwright/python:latest
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Copier et installer requirements
+COPY requirements.txt /app/
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends rustc cargo \
+ && rm -rf /var/lib/apt/lists/*
+
+# (Optionnel) Installer les navigateurs Playwright si non présents
+# RUN playwright install --with-deps
+
+# Copier le code
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Démarrer un worker RQ sur la queue fb_session
+CMD ["rq", "worker", "-u", "redis://redis:6379", "fb_session"]
+

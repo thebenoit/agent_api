@@ -4,15 +4,15 @@ import os
 import re
 import logging
 from bs4 import BeautifulSoup
-from crawl4ai import (
-    AsyncWebCrawler,
-    BrowserConfig,
-    CrawlerRunConfig,
-    CacheMode,
-    RoundRobinProxyStrategy,
-    ProxyConfig,
-    JsonCssExtractionStrategy,
-)
+
+from crawl4ai import BrowserConfig
+from crawl4ai import CrawlerRunConfig
+from crawl4ai import RoundRobinProxyStrategy
+from crawl4ai import ProxyConfig
+from crawl4ai import JsonCssExtractionStrategy
+from crawl4ai import AsyncWebCrawler
+from crawl4ai import CacheMode
+
 
 
 class OnePage(BaseTool, BaseScraper):
@@ -213,8 +213,8 @@ class OnePage(BaseTool, BaseScraper):
                     return False
                 ul = url.lower()
                 return (
-                    any(ext in ul for ext in [".jpg", ".jpeg", ".png", ".webp"]) or
-                    "safe_image.php" in ul
+                    any(ext in ul for ext in [".jpg", ".jpeg", ".png", ".webp"])
+                    or "safe_image.php" in ul
                 )
 
             def to_images_list(images_node, title=None):
@@ -248,7 +248,11 @@ class OnePage(BaseTool, BaseScraper):
                                     alt = item.get("alt")
                                     if src and is_image_url(src):
                                         # Vérifie si l'alt correspond au titre si un titre est fourni
-                                        if title is None or (alt and alt.strip().lower() == title.strip().lower()):
+                                        if title is None or (
+                                            alt
+                                            and alt.strip().lower()
+                                            == title.strip().lower()
+                                        ):
                                             normalized.append({"src": src, "alt": alt})
 
                         # Ancien format: thumbnails
@@ -261,18 +265,26 @@ class OnePage(BaseTool, BaseScraper):
                                     src = t.get("src")
                                     alt = t.get("alt")
                                     if src and is_image_url(src):
-                                        if title is None or (alt and alt.strip().lower() == title.strip().lower()):
+                                        if title is None or (
+                                            alt
+                                            and alt.strip().lower()
+                                            == title.strip().lower()
+                                        ):
                                             normalized.append({"src": src, "alt": alt})
 
                         # Si l'entrée est déjà un dict {src, alt}
                         if entry.get("src") and is_image_url(entry.get("src")):
                             src = entry.get("src")
                             alt = entry.get("alt")
-                            if title is None or (alt and alt.strip().lower() == title.strip().lower()):
-                                normalized.append({
-                                    "src": src,
-                                    "alt": alt,
-                                })
+                            if title is None or (
+                                alt and alt.strip().lower() == title.strip().lower()
+                            ):
+                                normalized.append(
+                                    {
+                                        "src": src,
+                                        "alt": alt,
+                                    }
+                                )
                 return normalized
 
             description = None
@@ -351,7 +363,10 @@ class OnePage(BaseTool, BaseScraper):
                                 if not src and img.get("srcset"):
                                     # prendre la plus grande dans srcset
                                     try:
-                                        parts = [p.strip() for p in img.get("srcset").split(",")]
+                                        parts = [
+                                            p.strip()
+                                            for p in img.get("srcset").split(",")
+                                        ]
                                         if parts:
                                             src = parts[-1].split(" ")[0]
                                     except Exception:

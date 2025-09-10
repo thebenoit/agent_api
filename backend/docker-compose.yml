@@ -1,0 +1,39 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file: .env
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB=${MONGO_DB}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file: .env
+    environment:
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB=${MONGO_DB}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - PROXY_SERVER=${PROXY_SERVER}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+      - PROXIES=${PROXIES}
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped

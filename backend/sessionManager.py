@@ -11,16 +11,16 @@ from selenium.webdriver.chrome.options import Options
 from seleniumwire.undetected_chromedriver import ChromeOptions
 from urllib.parse import urlparse
 import asyncio
-from crawl4ai import (
-    AsyncWebCrawler,
-    BrowserConfig,
-    CrawlerRunConfig,
-    # UndetectedAdapter,
-    ProxyConfig,
-    RoundRobinProxyStrategy,
-    CacheMode,
-)
+
+
+from crawl4ai import BrowserConfig
 from crawl4ai.async_crawler_strategy import AsyncPlaywrightCrawlerStrategy
+from crawl4ai import RoundRobinProxyStrategy
+from crawl4ai import ProxyConfig
+from crawl4ai import CrawlerRunConfig
+from crawl4ai import CacheMode
+
+
 import random
 from models.fb_sessions import FacebookSessionModel
 from schemas.fb_session import FacebookSession
@@ -596,8 +596,6 @@ class SessionsManager:
                 f"[user {user_id[:8]}] Erreur lors de la création/mise à jour de la session: {e}"
             )
             return False
-        
-    
 
     def put_session_on_db():
         headers, body, resp_body = self.get_first_req()

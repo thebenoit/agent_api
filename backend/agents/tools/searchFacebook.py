@@ -22,7 +22,6 @@ import sys
 from bs4 import BeautifulSoup
 
 
-
 # rotating ip library
 from requests_ip_rotator import ApiGateway
 import urllib3
@@ -81,7 +80,6 @@ class SearchFacebook(BaseTool, BaseScraper):
         minBedrooms: int,
         maxBedrooms: int,
         user_id: str,
-       
     ) -> Any:
 
         self.listings = []
@@ -139,10 +137,6 @@ class SearchFacebook(BaseTool, BaseScraper):
         # Notify initial progress
         if progress:
             progress("progress", {"message": "Initialisation du scraping Facebook"})
-            
-            
-        
-        
 
         # Exécuter la collecte synchrone existante dans un thread
         def _run_sync():
@@ -155,13 +149,13 @@ class SearchFacebook(BaseTool, BaseScraper):
             "[execute_async] base listings récupérés: %d",
             len(listings) if isinstance(listings, list) else -1,
         )
-        
+
         # if progress:
         #     progress("progress", {"count": len(listings)})
- 
+
         if not listings:
             return []
-        
+
         if progress:
             progress("progress", {"message": "Enrichissement des listings..."})
 
@@ -180,6 +174,10 @@ class SearchFacebook(BaseTool, BaseScraper):
                     listing_id = item.get("_id")
                     if listing_id:
                         url = f"https://www.facebook.com/marketplace/item/{listing_id}/"
+                        if progress:
+                            progress(
+                                "progress", {"message": "analyse listing specifique"}
+                            )
             else:
                 # Pour les listings de la carte (ancienne structure)
                 url = item.get("for_sale_item", {}).get("share_uri") or (
@@ -267,6 +265,10 @@ class SearchFacebook(BaseTool, BaseScraper):
                 "bathrooms": normalized[0].get("bathrooms"),
                 "url": normalized[0].get("url"),
             }
+            if progress:
+                progress(
+                    "progress", {"message": f"sample: {sample.get('title')} enregistre"}
+                )
             logger.info("[execute_async] normalized sample: %s", sample)
             logger.info("[execute_async] normalized: %s", normalized)
         logger.debug(
@@ -520,12 +522,11 @@ class SearchFacebook(BaseTool, BaseScraper):
                         },
                     }
 
-                    #print("filtered_data: ", filtered_data)
+                    # print("filtered_data: ", filtered_data)
 
                     # Ajout à la liste des listings
                     listings.append(filtered_data)
                     logger.info(f"✅ Listing ajouté: {title} - {price_text} - {city}")
-        
 
                 else:
                     print(
@@ -772,8 +773,6 @@ class SearchFacebook(BaseTool, BaseScraper):
                     minBedrooms,
                     maxBedrooms,
                 )
-                
-
 
                 if headers is None or payload is None:
                     logger.info(
@@ -784,7 +783,9 @@ class SearchFacebook(BaseTool, BaseScraper):
                             self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                         )
                         if progress:
-                            progress("progress", {"message": f"Nouvelle tentative dans..."})
+                            progress(
+                                "progress", {"message": f"Nouvelle tentative dans..."}
+                            )
                         logger.info(f"Nouvelle tentative dans {sleep_time} secondes...")
                         time.sleep(sleep_time)
                         continue
@@ -798,7 +799,9 @@ class SearchFacebook(BaseTool, BaseScraper):
                     "https://www.facebook.com/api/graphql/",
                     data=urllib.parse.urlencode(payload),
                 )
-                logger.info(f"[DEBUG] GraphQL Response status={resp_body.status_code}\n")
+                logger.info(
+                    f"[DEBUG] GraphQL Response status={resp_body.status_code}\n"
+                )
 
                 # Vérifier que la réponse contient les bonnes données avec boucle while
                 try:
@@ -846,13 +849,12 @@ class SearchFacebook(BaseTool, BaseScraper):
                     response_data = resp_body.json()
                     viewer_data = response_data.get("data", {}).get("viewer", {})
 
-
                     if "marketplace_feed_stories" in viewer_data:
                         logger.info("📰 Traitement des données du feed")
                         listings = self.add_feed_listings(response_data)
                     else:
                         logger.info("⚠️ Type de données non reconnu")
-                        
+
                     if not listings and attempt < self.max_retries - 1:
                         logger.info(
                             f"Aucune annonce trouvée (tentative {attempt+1}), "

@@ -21,7 +21,7 @@ async def test_with_search_service():
         "min_price": 800,
         "max_price": 2000,
         "location_near": ["Downtown"],
-        "enrich_top_k": 3,
+        "enrich_top_k": 4,
     }
 
     user_id = "test_user_123"

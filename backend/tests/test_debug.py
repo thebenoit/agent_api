@@ -28,7 +28,7 @@ def test_debug():
             "min_price": 800,
             "max_price": 2000,
             "location_near": ["Downtown"],
-            "enrich_top_k": 3,
+            "enrich_top_k": 4,
         }
 
         cache_key = search_service._generate_cache_key(search_params)

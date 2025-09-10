@@ -92,8 +92,8 @@ async def search_listing(
     min_price: int,
     max_price: int,
     location_near: Optional[list] = None,
-    enrich_top_k: int = 3,
-    session_id: Annotated[str, InjectedState("session_id")] = None
+    enrich_top_k: int = 4,
+    session_id: Annotated[str, InjectedState("session_id")] = None,
 ):
     """Search listings in listings website according to user preferences.
 
@@ -118,7 +118,6 @@ async def search_listing(
             logger.error("SearchService non initialisé")
             return {"error": "Service de recherche non disponible"}
 
-
         search_params = {
             "city": city,
             "min_bedrooms": min_bedrooms,
@@ -130,10 +129,6 @@ async def search_listing(
         }
 
         user_ip = "127.0.0.1"
-        
-        
-        
-        
 
         result = await search_service.search_listings(
             search_params,
@@ -242,12 +237,12 @@ class IanGraph:
             model="gpt-4o-mini",
             api_key=os.getenv("OPENAI_API_KEY"),
             max_tokens=1000,
-         ).bind_tools([search_listing])
+        ).bind_tools([search_listing])
         # Utiliser le manager au lieu d'une connexion directe
         self._client = mongo_manager.get_async_client()
         self._graph: Optional[CompiledStateGraph] = None
         self._checkpointer: Optional[AsyncMongoDBSaver] = None
-       
+
     def __process_message(self, messages: list[BaseMessage]) -> list[Message]:
         openai_style_messages = convert_to_openai_messages(messages)
         return [
@@ -255,9 +250,9 @@ class IanGraph:
             for message in openai_style_messages
             if message["role"] in ["assistant", "user"] and message["content"]
         ]
-          
+
     def serialise_ai_message_chunk(self, chunk: dict) -> str:
-        if(isinstance(chunk, AIMessageChunk)):
+        if isinstance(chunk, AIMessageChunk):
             return chunk.content
         else:
             raise TypeError(f"Expected AIMessageChunk, got {type(chunk).__name__}")
@@ -304,7 +299,9 @@ class IanGraph:
         n = len(history)
         while i < n:
             msg = history[i]
-            has_tool_calls = isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None)
+            has_tool_calls = isinstance(msg, AIMessage) and getattr(
+                msg, "tool_calls", None
+            )
             if has_tool_calls:
                 next_is_tool = (i + 1 < n) and isinstance(history[i + 1], ToolMessage)
                 if not next_is_tool:
@@ -316,14 +313,14 @@ class IanGraph:
         return sanitized
 
     async def get_stream_response(self, messages: list[Message], session_id: str):
-        
+
         config = {
             "configurable": {"thread_id": session_id},
             "metadata": {
                 "debug": False,
             },
         }
-        
+
         try:
             # ✅ Créer le checkpointer et compiler le graph pour cette invocation
             async with AsyncMongoDBSaver.from_conn_string(
@@ -340,27 +337,31 @@ class IanGraph:
                 graph_with_checkpointer = self._graph_builder.compile(
                     checkpointer=checkpointer
                 )
-                
+
                 events = graph_with_checkpointer.astream_events(
                     {"messages": dump_messages(messages), "session_id": session_id},
                     config=config,
                 )
                 async for event in events:
                     event_type = event["event"]
-                    
+
                     # 🔍 DEBUG : Voir la structure de l'event
-                    #print(f"Event reçu: {event}\n")
+                    # print(f"Event reçu: {event}\n")
                     # print(f"Event type: {event_type}\n")
                     # print(f"Event data keys: {event.get('data', {}).keys()}")
-                    
+
                     # ✅ APRÈS (sécurisé) - Vérifier AVANT d'accéder
-                    if event_type in ("on_llm_stream","on_chat_model_stream") and "chunk" in event.get("data", {}):
-                        chunk_content = self.serialise_ai_message_chunk(event["data"]["chunk"])
+                    if event_type in (
+                        "on_llm_stream",
+                        "on_chat_model_stream",
+                    ) and "chunk" in event.get("data", {}):
+                        chunk_content = self.serialise_ai_message_chunk(
+                            event["data"]["chunk"]
+                        )
                         payload = {"type": "content", "content": chunk_content}
                         yield f"data: {json.dumps(payload)}\n\n"
                     # elif event_type == "on_chat_model_stream":
-                    
-                    
+
                     elif event_type == "on_chat_model_end":
                         data = event.get("data", {})
                         output = data.get("output")
@@ -368,19 +369,23 @@ class IanGraph:
                             tool_calls = output.tool_calls
                             payload = {"type": "tool_calls", "tool_calls": tool_calls}
                             yield f"data: {json.dumps(payload)}\n\n"
-                        
+
                     elif event_type == "on_tool_start":
                         data = event.get("data", {})
                         # certains événements ont 'name' et 'tool_input' directement
-                        tool_name = data.get("name") or getattr(data.get("output"), "tool_name", "unknown")
-                        tool_args = data.get("tool_input") or getattr(data.get("output"), "tool_input", {})
+                        tool_name = data.get("name") or getattr(
+                            data.get("output"), "tool_name", "unknown"
+                        )
+                        tool_args = data.get("tool_input") or getattr(
+                            data.get("output"), "tool_input", {}
+                        )
                         payload = {
                             "type": "tool_start",
                             "tool": tool_name,
                             "args": tool_args,
                         }
                         yield f"data: {json.dumps(payload)}\n\n"
-                    
+
                     elif event_type == "on_tool_end":
                         print(f"Event reçu: {event}\n")
                         data = event.get("data", {})
@@ -388,37 +393,43 @@ class IanGraph:
                         output: ToolMessage = data.get("output")
                         if output:
                             # Émettre d'abord l'événement tool_end
-                            payload = {"type": "tool_end", "tool": output.name, "result": output.content}
+                            payload = {
+                                "type": "tool_end",
+                                "tool": output.name,
+                                "result": output.content,
+                            }
                             yield f"data: {json.dumps(payload)}\n\n"
                             # Puis parser le JSON de output.content
                             try:
                                 result_data = json.loads(output.content)
                                 print(f"result_data reçu: {result_data}\n")
-                                if result_data.get("status") in ("queued", "processing") and result_data.get("job_id"):
+                                if result_data.get("status") in (
+                                    "queued",
+                                    "processing",
+                                ) and result_data.get("job_id"):
                                     job_payload = {
                                         "type": "job",
                                         "job_id": result_data["job_id"],
                                         "status": result_data["status"],
-                                        "estimated_wait": result_data.get("estimated_wait"),
+                                        "estimated_wait": result_data.get(
+                                            "estimated_wait"
+                                        ),
                                     }
                                     print(f"job_payload reçu: {job_payload}\n")
                                     yield f"data: {json.dumps(job_payload)}\n\n"
                             except Exception as e:
                                 print(f"Erreur parsing output.content: {e}")
-                        
-                    
+
                     elif event_type == "end" or (
-                        event_type == "on_chain_end" and event.get("name") == "LangGraph"
+                        event_type == "on_chain_end"
+                        and event.get("name") == "LangGraph"
                     ):
                         yield f"data: {json.dumps({'type': '[DONE]'})}\n\n"
                         break
-                    
- 
 
         except Exception as e:
             logger.error(f"error_getting_response: {e}")
             raise e
-      
 
     async def _get_response(
         self,
@@ -428,7 +439,7 @@ class IanGraph:
     ) -> list[dict]:
         """Get a response from the LLM."""
         logger.info(f"Session_id stocké pour cette session: {session_id}")
-        
+
         config = {
             "configurable": {"thread_id": session_id},
             "metadata": {
@@ -461,11 +472,9 @@ class IanGraph:
                     {"messages": dump_messages(messages), "session_id": session_id_str},
                     config=config,
                 )
-                
+
                 logger.info(f"response: {response} \n")
-                
-                
-                
+
                 return self.__process_message(response["messages"])
         except Exception as e:
             logger.error(f"error_getting_response: {e}")
@@ -488,13 +497,12 @@ class IanGraph:
             logger.error(f"Erreur initialisation StateGraph: {e}")
             logger.error(f"Traceback:", exc_info=True)
             raise
-        
 
         logger.info("Ajout des nodes au graph...")
         try:
             graph_builder.add_node("chatbot", self._chat)
             # graph_builder.add_node("human_verif", human_pref_validator)
-            graph_builder.add_node("tools",tool_node)
+            graph_builder.add_node("tools", tool_node)
             logger.info("Nodes ajoutés avec succès")
         except Exception as e:
             logger.error(f"Erreur ajout des nodes: {e}")
@@ -517,15 +525,17 @@ class IanGraph:
     async def _chat(self, state: GraphState) -> dict:
 
         logger.info(f"=== DÉBUT CHATBOT ===")
-        
+
         if hasattr(state, "session_id"):
             logger.info(f"Session_id récupéré: {state.session_id}")
         else:
-            logger.warning("Impossible de récupérer le session_id, utilisation du fallback")
+            logger.warning(
+                "Impossible de récupérer le session_id, utilisation du fallback"
+            )
             state.session_id = None
 
         try:
-            
+
             logger.info(f"lenght of state.messages: {len(state.messages)}")
 
             # Build safe history: preserve ToolMessages, remove orphan tool_calls
@@ -547,36 +557,34 @@ class IanGraph:
             logger.error(f"Erreur dans chatbot: {e}")
             logger.error(f"Traceback:", exc_info=True)
             raise
-        
-    
-    async def tools_router(self,state: GraphState):
+
+    async def tools_router(self, state: GraphState):
         logger.info(f"=== DÉBUT TOOLS_ROUTER ===")
-        
+
         last_message = state["messages"][-1]
-        
-        if(hasattr(last_message, "tool_calls" and len(last_message.tool_calls) > 0)):
+
+        if hasattr(last_message, "tool_calls" and len(last_message.tool_calls) > 0):
             logger.info(f"Tool calls detected: {last_message.tool_calls}")
             return "tool_node"
-        else: 
+        else:
             logger.info(f"No tool calls detected")
             return END
-            
-            
-    async def custom_tool_node(self,state: GraphState):
+
+    async def custom_tool_node(self, state: GraphState):
         """custom handle that handle tool calls from the LLm"""
         logger.info(f"=== DÉBUT CUSTOM_TOOL_NODE ===")
         tool_calls = state["messages"][-1].tool_calls
-        
+
         # Initialize list to store tool messaes
         tool_messages = []
-        
-        #process each tool call
+
+        # process each tool call
         for tool_call in tool_calls:
             logger.info(f"Processing tool call: {tool_call}")
             tool_name = tool_call["name"]
             tool_args = tool_call["args"]
             tool_id = tool_call["id"]
-            
+
             if tool_name == "search_listing":
                 logger.info(f"Processing search_listing tool call: {tool_args}")
                 args = dict(tool_args)
@@ -592,11 +600,5 @@ class IanGraph:
                 )
 
                 tool_messages.append(tool_message)
-        
+
         return {"messages": tool_messages}
-                
-                
-               
-        
-        
-        

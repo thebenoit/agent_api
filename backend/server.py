@@ -11,6 +11,7 @@ from typing import Optional, List
 from langchain_core.messages import HumanMessage, AIMessage
 from fastapi.responses import StreamingResponse
 from auth.middleware import auth_middleware
+from middleware.access_control_middleware import access_control_middleware
 from database import mongo_db
 import json
 from agents.graph import IanGraph
@@ -24,7 +25,6 @@ from rq import Queue
 from workers.fb_session_worker import create_fb_session_job
 from langchain_core.callbacks.manager import AsyncCallbackManager
 from langchain_core.callbacks.base import AsyncCallbackHandler
-
 
 
 # Configuration du logging
@@ -68,11 +68,21 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Ajouter le middleware d'authentification
 @app.middleware("http")
 async def auth_middleware_wrapper(request: Request, call_next):
-    if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi.json") or request.url.path.startswith("/fb-session/enqueue"):
+    if (
+        request.url.path.startswith("/docs")
+        or request.url.path.startswith("/openapi.json")
+        or request.url.path.startswith("/fb-session/enqueue")
+    ):
         print("docs")
         return await call_next(request)
-    
+
     return await auth_middleware(request, call_next)
+
+
+# Middleware pour contrôler l'accès au chat stream
+@app.middleware("http")
+async def access_control_wrapper(request: Request, call_next):
+    return await access_control_middleware(request, call_next)
 
 
 # class ChatRequest(BaseModel):
@@ -104,6 +114,7 @@ class chatResponse(BaseModel):
 async def health():
     return {"status": "ok"}
 
+
 @atexit.register
 def cleanup():
     """Ferme proprement les connexions MongoDB à la fermeture de l'application."""
@@ -122,19 +133,19 @@ async def job_events(job_id: str):
     Le worker publie sur: sse:job:{job_id}
     """
     try:
-        #connexion à redis
+        # connexion à redis
         redis_url = os.getenv("REDIS_URL")
         r = redis.from_url(redis_url, decode_responses=True)
-        
-        #Abonnement au channel
+
+        # Abonnement au channel
         pubsub = r.pubsub()
         channel = f"sse:job:{job_id}"
         pubsub.subscribe(channel)
 
         async def event_generator():
             try:
-                while True: #Boucle infinie pour écouter les événements
-                    #ecoute les messages de redis
+                while True:  # Boucle infinie pour écouter les événements
+                    # ecoute les messages de redis
                     message = pubsub.get_message(timeout=10.0)
                     if message and message.get("type") == "message":
                         data = message.get("data", "")
@@ -146,12 +157,11 @@ async def job_events(job_id: str):
                     pubsub.close()
                 except Exception as e:
                     pass
+
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as e:
         logger.error(f"Erreur lors de l'initialisation de job_events: {e}")
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
-        
-
 
 
 @app.get("/user/info")
@@ -162,7 +172,8 @@ async def get_user_info(req: Request):
         "thread_id": req.state.thread_id,
         "user": req.state.user,
     }
-    
+
+
 @app.post("/fb-session/enqueue/{user_id}")
 async def enqueue_fb_session(user_id: str):
     """
@@ -174,9 +185,6 @@ async def enqueue_fb_session(user_id: str):
     job = queue.enqueue(create_fb_session_job, user_id)
     return {"enqueued": True, "job_id": job.id}
 
-    
-
-
 
 # ... existing code ...
 
@@ -185,9 +193,8 @@ async def enqueue_fb_session(user_id: str):
 async def chat(request: ChatRequest, req: Request):
     try:
 
-
         user_info = req.state.user
-        
+
         if user_info is None:
             return JSONResponse(
                 status_code=404,
@@ -196,19 +203,17 @@ async def chat(request: ChatRequest, req: Request):
                     "message": "L'utilisateur n'existe plus dans la base de données",
                 },
             )
-        
+
         dernier_message = request.messages[-1]
-        
 
         agent_response = await agent._get_response(
             messages=[dernier_message],
             session_id=user_info["_id"],
             user_id=user_info["_id"],
         )
-        
+
         result = {"response": agent_response}
 
-        
         if agent_response:
             try:
                 payload = json.loads(result["content"])
@@ -217,7 +222,6 @@ async def chat(request: ChatRequest, req: Request):
             except (ValueError, KeyError):
                 pass
         return result
-        
 
     except NotImplementedError as e:
         logger.error(f"Erreur NotImplementedError: {e}")
@@ -240,30 +244,27 @@ async def chat(request: ChatRequest, req: Request):
             },
         )
 
+
 @app.get("/chat/stream")
 async def chat_stream(message: str, req: Request):
-    
+
     checkpointer_id = req.state.user_id
-    
 
     msg = Message(role="user", content=message)
-    
+
     return StreamingResponse(
         agent.get_stream_response([msg], checkpointer_id),
         media_type="text/event-stream",
     )
-    
-    
 
-    
 
 # Gestionnaire de fermeture propre
 @atexit.register
 def cleanup():
     """Ferme proprement les connexions MongoDB à la fermeture de l'application."""
     mongo_manager.close_all()
-    
-    
+
+
 if __name__ == "__main__":
     uvicorn.run(
         "server:app",
@@ -272,4 +273,4 @@ if __name__ == "__main__":
         workers=4,
         access_log=True,
         reload=True,
-        )
+    )

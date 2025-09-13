@@ -13,6 +13,10 @@ from rq.job import Job
 from config.redisConfig import RedisConfig
 from agents.tools.searchFacebook import SearchFacebook
 from agents.tools.googlePlaces import GooglePlaces
+from dotenv import load_dotenv 
+
+load_dotenv()
+
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +104,7 @@ class SearchService:
 
         # 2. Vérifier le cache Redis
         cache_key = self._generate_cache_key(search_params)
+        logger.info(f"apres cache hit")
         # cached_result = self.redis_client.get(cache_key)
 
         # if cached_result:

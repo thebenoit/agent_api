@@ -100,50 +100,50 @@ class SearchService:
 
         # 2. Vérifier le cache Redis
         cache_key = self._generate_cache_key(search_params)
-        cached_result = self.redis_client.get(cache_key)
+        # cached_result = self.redis_client.get(cache_key)
 
-        if cached_result:
-            logger.info(f"Cache hit pour {cache_key}")
-            return {
-                "status": "cached",
-                "data": json.loads(cached_result),
-                "cached_at": datetime.now().isoformat(),
-            }
+        # if cached_result:
+        #     logger.info(f"Cache hit pour {cache_key}")
+        #     return {
+        #         "status": "cached",
+        #         "data": json.loads(cached_result),
+        #         "cached_at": datetime.now().isoformat(),
+        #     }
 
-        # 3. Vérifier si un job est déjà en cours
+        # # 3. Vérifier si un job est déjà en cours
         job_key = f"job:{cache_key}"
-        existing_job_id = self.redis_client.get(job_key)
+        # existing_job_id = self.redis_client.get(job_key)
 
-        if existing_job_id:
+        # if existing_job_id:
             # Job en cours, retourner le statut
-            try:
-                job = Job.fetch(existing_job_id, connection=self.redis_client)
-                if job.is_finished:
-                    # Job terminé, récupérer le résultat
-                    result = job.result
-                    if result:
-                        # Mettre en cache et nettoyer
-                        self.redis_client.setex(
-                            cache_key, self.cache_ttl, json.dumps(result)
-                        )
-                        self.redis_client.delete(job_key)
-                        return {"status": "completed", "data": result}
-                    else:
-                        # Job échoué, nettoyer et relancer
-                        self.redis_client.delete(job_key)
-                elif job.is_failed:
-                    # Job échoué, nettoyer et relancer
-                    self.redis_client.delete(job_key)
-                else:
-                    # Job en cours
-                    return {
-                        "status": "processing",
-                        "job_id": existing_job_id,
-                        "estimated_wait": "10-30 secondes",
-                    }
-            except Exception as e:
-                logger.error(f"Erreur lors de la récupération du job: {e}")
-                self.redis_client.delete(job_key)
+            # try:
+            #     job = Job.fetch(existing_job_id, connection=self.redis_client)
+            #     if job.is_finished:
+            #         # Job terminé, récupérer le résultat
+            #         result = job.result
+            #         if result:
+            #             # Mettre en cache et nettoyer
+            #             self.redis_client.setex(
+            #                 cache_key, self.cache_ttl, json.dumps(result)
+            #             )
+            #             self.redis_client.delete(job_key)
+            #             return {"status": "completed", "data": result}
+            #         else:
+            #             # Job échoué, nettoyer et relancer
+            #             self.redis_client.delete(job_key)
+            #     elif job.is_failed:
+            #         # Job échoué, nettoyer et relancer
+            #         self.redis_client.delete(job_key)
+            #     else:
+            #         # Job en cours
+            #         return {
+            #             "status": "processing",
+            #             "job_id": existing_job_id,
+            #             "estimated_wait": "10-30 secondes",
+            #         }
+            # except Exception as e:
+            #     logger.error(f"Erreur lors de la récupération du job: {e}")
+            #     self.redis_client.delete(job_key)
 
         # 4. Créer un nouveau job de scraping
         try:

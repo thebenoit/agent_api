@@ -12,13 +12,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends rustc cargo \
  && rm -rf /var/lib/apt/lists/*
 
-# (Optionnel) Installer les navigateurs Playwright si non présents
-# RUN playwright install --with-deps
-
-# Copier le code
-COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Démarrer un worker RQ sur la queue fb_session
-CMD ["rq", "worker", "-u", "redis://redis:6379", "fb_session"]
+# Copier le code source
+COPY . /app/
 
+# Démarrer le worker
+CMD ["python", "-c", "from workers.scraping_workers import start_worker; start_worker()"]

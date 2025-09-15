@@ -81,9 +81,9 @@ async def auth_middleware_wrapper(request: Request, call_next):
 
 
 #Middleware pour contrôler l'accès au chat stream
-@app.middleware("http")
-async def access_control_wrapper(request: Request, call_next):
-    return await access_control_middleware(request, call_next)
+# @app.middleware("http")
+# async def access_control_wrapper(request: Request, call_next):
+#     return await access_control_middleware(request, call_next)
 
 
 # class ChatRequest(BaseModel):

@@ -225,6 +225,6 @@ if __name__ == "__main__":
         workers=4,
         access_log=True,
         reload=True,
-        proxy_headers=True
+        proxy_headers=True,
         forwarded_allow_ips="*"
     )

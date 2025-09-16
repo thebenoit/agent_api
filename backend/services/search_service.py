@@ -26,7 +26,7 @@ class SearchService:
 
     def __init__(self):
         # Configuration Redis
-        self.redis_url =  "redis://localhost:6379"
+        self.redis_url =  os.getenv("REDIS_URL")
         self.redis_client = redis.from_url(self.redis_url, decode_responses=True)
 
         # Configuration des queues

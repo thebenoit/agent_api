@@ -19,6 +19,7 @@ from crawl4ai import RoundRobinProxyStrategy
 from crawl4ai import ProxyConfig
 from crawl4ai import CrawlerRunConfig
 from crawl4ai import CacheMode
+from crawl4ai import AsyncWebCrawler
 
 
 import random

@@ -137,7 +137,7 @@ async def job_events(job_id: str):
     """
     try:
         # connexion à redis
-        redis_url = "redis://localhost:6379" #os.getenv("REDIS_URL")
+        redis_url = os.getenv("REDIS_URL")
         r = redis.from_url(redis_url, decode_responses=True)
 
         # Abonnement au channel

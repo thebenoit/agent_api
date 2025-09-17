@@ -172,7 +172,7 @@ class ScrapingWorker:
 
             try:
                 listings = future.result(
-                    timeout=90
+                    timeout=200
                 )  # timeout 25s pour laisser 5s de marge
                 logger.info(f"[{job_id}] Scraping terminé: {len(listings)} listings\n")
 

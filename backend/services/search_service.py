@@ -33,7 +33,7 @@ class SearchService:
         self.scraping_queue = Queue("scraping", connection=self.redis_client)
         self.cache_ttl = int(os.getenv("CACHE_TTL", 300))  # 5 minutes
         self.max_job_attempts = int(os.getenv("MAX_JOB_ATTEMPTS", 3))
-        self.job_timeout = int(os.getenv("JOB_TIMEOUT", 90))
+        self.job_timeout = int(os.getenv("JOB_TIMEOUT", 200))
 
         # Rate limiting
         self.rate_limit_window = 60  # 1 minute

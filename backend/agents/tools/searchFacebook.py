@@ -20,6 +20,7 @@ from selenium.webdriver.chrome.service import Service
 import logging
 import sys
 from bs4 import BeautifulSoup
+from utils.event_publisher import EventPublisher
 
 
 # rotating ip library
@@ -70,6 +71,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         self.max_retries = 3
         self.retry_delay = 10
+        self.event_publisher = EventPublisher()
 
     def execute(
         self,
@@ -115,11 +117,12 @@ class SearchFacebook(BaseTool, BaseScraper):
         maxBedrooms: int,
         user_id: str,
         listings: list,
+        job_id: str,
         *,
         top_k: int = 5,
         concurrency: int = 3,
-        timeout_sec: float = 30.0,
-        progress=None,
+        timeout_sec: float = 90.0,
+        
         **kwargs,
     ) -> Any:
         logger.info(
@@ -134,10 +137,7 @@ class SearchFacebook(BaseTool, BaseScraper):
             concurrency,
             timeout_sec,
         )
-        # Notify initial progress
-        if progress:
-            progress("progress", {"message": "Initialisation du scraping Facebook"})
-
+      
         # Exécuter la collecte synchrone existante dans un thread
         def _run_sync():
             return self.execute(
@@ -155,9 +155,15 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         if not listings:
             return []
-
-        if progress:
-            progress("progress", {"message": "Enrichissement des listings..."})
+   
+            
+        self.event_publisher.publish(
+            job_id,
+            "progress",
+            {
+            "status":"processing",
+            "message": "Enrichissement des listings..." 
+            })
 
         onepage = OnePage()
         sem = asyncio.Semaphore(concurrency)
@@ -174,10 +180,13 @@ class SearchFacebook(BaseTool, BaseScraper):
                     listing_id = item.get("_id")
                     if listing_id:
                         url = f"https://www.facebook.com/marketplace/item/{listing_id}/"
-                        if progress:
-                            progress(
-                                "progress", {"message": "analyse listing specifique"}
-                            )
+                        
+
+                
+                
+                
+                
+                
             else:
                 # Pour les listings de la carte (ancienne structure)
                 url = item.get("for_sale_item", {}).get("share_uri") or (
@@ -205,10 +214,38 @@ class SearchFacebook(BaseTool, BaseScraper):
                     url,
                     item.get("listing_type", "unknown"),
                 )
+                
+                                            
+                self.event_publisher.publish(
+                    job_id,
+                    "progress",
+                    {
+                    "status":"processing",
+                    "message": "Démarage du fetch de la page",
+                    "uri":f"{url}" ,
+                    "item":item
+                    })
+                
+                
                 async with sem:
                     data = await asyncio.wait_for(
-                        onepage.fetch_page(url), timeout=timeout_sec
+                        onepage.fetch_page(url,job_id), timeout=timeout_sec
                     )
+                    
+                self.event_publisher.publish(
+                    job_id,
+                    "progress",
+                    {
+                        "status": "success",
+                        "type":"listings_progress_info",
+                        "message": f"Fetch de la page réussi",
+                        "data":data,
+                        "url": url,
+                        "description_length": len(data.get("description", "") or ""),
+                        "images_count": len(data.get("images", []) or []),
+                        "first_image": (data.get("images", [None])[0] if data.get("images") else None),
+                    },
+                )
                 # Fusion dans la structure de sortie
                 item.setdefault("details", {})
                 if isinstance(data, dict):
@@ -219,6 +256,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                 item["details"]["source_url"] = url
                 elapsed = asyncio.get_event_loop().time() - start
                 images_count = len(item["details"].get("images", []))
+                
                 desc_len = len(item["details"].get("description", "") or "")
                 logger.info(
                     "[enrich] ok _id=%s in %.2fs images=%d desc_len=%d type=%s",
@@ -236,6 +274,16 @@ class SearchFacebook(BaseTool, BaseScraper):
                     url,
                     item.get("listing_type", "unknown"),
                     e,
+                )
+                
+                self.event_publisher.publish(
+                    job_id,
+                    "Error",
+                    {
+                        "status": "Error",
+                        "message": f"Erreur lors de la recherche d'appartement ",
+                        
+                    },
                 )
             return item
 
@@ -265,10 +313,16 @@ class SearchFacebook(BaseTool, BaseScraper):
                 "bathrooms": normalized[0].get("bathrooms"),
                 "url": normalized[0].get("url"),
             }
-            if progress:
-                progress(
-                    "progress", {"message": f"sample: {sample.get('title')} enregistre"}
-                )
+
+                
+            self.event_publisher.publish(
+                job_id,
+                "progress",
+                {
+                    "message": f"{sample.get('title')}",
+                    "sample":sample
+                }
+                                         )
             logger.info("[execute_async] normalized sample: %s", sample)
             logger.info("[execute_async] normalized: %s", normalized)
         logger.debug(
@@ -782,10 +836,6 @@ class SearchFacebook(BaseTool, BaseScraper):
                         sleep_time = (
                             self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                         )
-                        if progress:
-                            progress(
-                                "progress", {"message": f"Nouvelle tentative dans..."}
-                            )
                         logger.info(f"Nouvelle tentative dans {sleep_time} secondes...")
                         time.sleep(sleep_time)
                         continue

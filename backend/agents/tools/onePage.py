@@ -1,5 +1,6 @@
 from agents.tools.base_tool import BaseTool
 from agents.tools.bases.base_scraper import BaseScraper
+from utils.event_publisher import EventPublisher
 import os
 import re
 import logging
@@ -25,6 +26,8 @@ class OnePage(BaseTool, BaseScraper):
         self.payload_to_send = None
         self.cookies = None
         ignore_ssl_errors = True
+        
+        self.event_publisher = EventPublisher()
 
         self.schema = {
             "name": "Facebook Images",
@@ -130,6 +133,7 @@ class OnePage(BaseTool, BaseScraper):
     async def fetch_page(
         self,
         url: str,
+        job_id: str,
         *,
         return_raw_html: bool = False,
         return_extracted_raw: bool = False,

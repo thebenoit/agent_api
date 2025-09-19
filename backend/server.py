@@ -156,6 +156,7 @@ async def job_events(job_id: str):
                     await asyncio.sleep(0.05)
             finally:
                 try:
+                    
                     pubsub.unsubscribe(channel)
                     pubsub.close()
                 except Exception as e:

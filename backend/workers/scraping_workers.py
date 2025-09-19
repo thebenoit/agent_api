@@ -23,6 +23,7 @@ from agents.tools.googlePlaces import GooglePlaces
 from services.search_service import SearchService
 from models.fb_sessions import FacebookSessionModel
 from sessionManager import SessionsManager
+from utils.event_publisher import EventPublisher
 
 load_dotenv()
 
@@ -62,6 +63,7 @@ class ScrapingWorker:
         self.jobs_processed = 0
         self.jobs_failed = 0
         self.start_time = time.time()
+        self._event_publisher = EventPublisher()
 
         # Gestion des signaux pour arrêt propre
         signal.signal(signal.SIGTERM, self._handle_shutdown)
@@ -74,17 +76,6 @@ class ScrapingWorker:
         logger.info(f"Signal {signum} reçu. Arrêt en cours...")
         self.thread_pool.shutdown(wait=True)
         sys.exit(0)
-
-    def _publish_event(self, job_id: str, event: str, payload: dict):
-        """
-        Publie un événement SSE sur le canal Redis du job
-        """
-        try:
-            channel = f"sse:job:{job_id}"
-            data = json.dumps({"event": event, "payload": payload}, default=str)
-            self.redis_client.publish(channel, data)
-        except Exception as e:
-            logger.warning(f"[{job_id}] publish_event error: {e}")
 
     def _init_scraper(self):
         """
@@ -112,7 +103,9 @@ class ScrapingWorker:
 
         try:
             logger.info(f"Worker démarré pour user {user_id[:8]}\n")
-            self._publish_event(job_id, "start", {"message": "Démarrage du scraping"})
+            self._event_publisher.publish(
+                job_id, "start", {"message": "Démarrage du scraping"}
+            )
             self._init_scraper()
 
             city = search_params.get("city", "")
@@ -134,12 +127,13 @@ class ScrapingWorker:
                     "timestamp": datetime.now().isoformat(),
                     "retry_possible": True,
                 }
-                self._publish_event(job_id, "error", error_payload)
+                self._event_publisher.publish(job_id, "error", error_payload)
                 raise Exception(error_msg)
 
             import random
 
             selected_place = random.choice(places_results["places"])
+
             lat = selected_place["location"]["latitude"]
             lon = selected_place["location"]["longitude"]
 
@@ -149,7 +143,7 @@ class ScrapingWorker:
                 "coordinates": {"lat": lat, "lon": lon},
             }
 
-            self._publish_event(job_id, "progress", payload)
+            self._event_publisher.publish(job_id, "progress", payload)
 
             # 2. Scraping Facebook avec ThreadPoolExecutor
             logger.info(f"[{job_id}] Coordonnées: lat={lat}, lon={lon}\n")
@@ -192,12 +186,12 @@ class ScrapingWorker:
                 elapsed = time.time() - start_time
                 logger.info(f"[{job_id}] Job terminé en {elapsed:.2f}s\n")
                 payload = {
-                    "status": "success",
+                    
                     "listings": listings,
                     "processing_time": elapsed,
                     "coordinates": {"lat": lat, "lon": lon},
                 }
-                self._publish_event(job_id, "completed", payload)
+                self._event_publisher.publish(job_id, "completed", payload)
 
                 return {
                     "status": "success",
@@ -216,7 +210,7 @@ class ScrapingWorker:
                     "timestamp": datetime.now().isoformat(),
                     "retry_possible": True,
                 }
-                self._publish_event(job_id, "error", error_payload)
+                self._event_publisher.publish(job_id, "error", error_payload)
                 raise
         except Exception as e:
             self.jobs_failed += 1
@@ -227,7 +221,7 @@ class ScrapingWorker:
                 "timestamp": datetime.now().isoformat(),
                 "retry_possible": False,
             }
-            self._publish_event(job_id, "error", error_payload)
+            self._event_publisher.publish(job_id, "error", error_payload)
             raise
 
     def check_user_session(self, user_id: str) -> dict:
@@ -328,7 +322,7 @@ class ScrapingWorker:
             logger.info(
                 f"[{job_id}] Vérification de la session Facebook pour {user_id[:8]}"
             )
-            self._publish_event(
+            self._event_publisher.publish(
                 job_id, "progress", {"message": "Vérification de la session Facebook"}
             )
             session = self.check_user_session(user_id)
@@ -337,7 +331,7 @@ class ScrapingWorker:
             # define progress callback to publish SSE
             def progress_cb(event: str, payload: dict):
                 try:
-                    self._publish_event(job_id, event, payload)
+                    self._event_publisher.publish(job_id, event, payload)
                 except Exception:
                     logger.warning(f"[{job_id}] progress publish failed")
 
@@ -358,8 +352,10 @@ class ScrapingWorker:
                         max_bedrooms,
                         user_id,
                         [],
+                        job_id,
                         top_k=enrich_top_k,
-                        progress=progress_cb,
+                        
+                       
                     )
                 )
                 return result or []
@@ -383,7 +379,7 @@ class ScrapingWorker:
                 }
                 rq_job = get_current_job()
                 job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
-                self._publish_event(job_id, "error", error_payload)
+                self._event_publisher.publish(job_id, "error", error_payload)
                 return []
 
         except Exception as e:
@@ -396,7 +392,7 @@ class ScrapingWorker:
             }
             rq_job = get_current_job()
             job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
-            self._publish_event(job_id, "error", error_payload)
+            self._event_publisher.publish(job_id, "error", error_payload)
             return []
 
     def get_metrics(self) -> dict[str, Any]:

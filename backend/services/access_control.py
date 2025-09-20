@@ -48,7 +48,7 @@ class AccessControlService:
             return(9999,9999)
         
         usage = (user.get("usage") or {"count": 0})
-        limit = 3
+        limit = 10
         remaining = max(0,limit - int(usage.get("count",0)))
         return (limit,remaining)
     

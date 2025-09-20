@@ -2,6 +2,7 @@ from typing import Any
 import asyncio
 import os
 from dotenv import load_dotenv
+from utils import event_publisher
 from seleniumwire import webdriver  # Import from seleniumwire
 import sys
 from models.fb_sessions import FacebookSessionModel
@@ -82,6 +83,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         minBedrooms: int,
         maxBedrooms: int,
         user_id: str,
+        job_id,
     ) -> Any:
 
         self.listings = []
@@ -95,10 +97,21 @@ class SearchFacebook(BaseTool, BaseScraper):
             "minBedrooms": minBedrooms,
             "maxBedrooms": maxBedrooms,
         }
+
+        self.event_publisher.publish(
+            job_id,
+            "progress",
+            {
+                "status": "user_pref",
+                "message": "preferences du user",
+                "input": input,
+            },
+        )
+
         print("inputs: ", inputs)
         # query = {"lat":"40.7128","lon":"-74.0060","bedrooms":2,"minBudget":80000,"maxBudget":100000,"bedrooms":3,"minBedrooms":3,"maxBedrooms":4}
         listings = asyncio.run(
-            self.scrape(inputs["lat"], inputs["lon"], inputs, user_id)
+            self.scrape(inputs["lat"], inputs["lon"], inputs, user_id, job_id)
         )
         if not listings:
             listings = []
@@ -122,7 +135,6 @@ class SearchFacebook(BaseTool, BaseScraper):
         top_k: int = 5,
         concurrency: int = 3,
         timeout_sec: float = 90.0,
-        
         **kwargs,
     ) -> Any:
         logger.info(
@@ -137,11 +149,18 @@ class SearchFacebook(BaseTool, BaseScraper):
             concurrency,
             timeout_sec,
         )
-      
+
         # Exécuter la collecte synchrone existante dans un thread
         def _run_sync():
             return self.execute(
-                lat, lon, minBudget, maxBudget, minBedrooms, maxBedrooms, user_id
+                lat,
+                lon,
+                minBudget,
+                maxBudget,
+                minBedrooms,
+                maxBedrooms,
+                user_id,
+                job_id,
             )
 
         listings = await asyncio.to_thread(_run_sync)
@@ -155,15 +174,12 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         if not listings:
             return []
-   
-            
+
         self.event_publisher.publish(
             job_id,
             "progress",
-            {
-            "status":"processing",
-            "message": "Enrichissement des listings..." 
-            })
+            {"status": "processing", "message": f"{len(listings)} listings"},
+        )
 
         onepage = OnePage()
         sem = asyncio.Semaphore(concurrency)
@@ -180,13 +196,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                     listing_id = item.get("_id")
                     if listing_id:
                         url = f"https://www.facebook.com/marketplace/item/{listing_id}/"
-                        
 
-                
-                
-                
-                
-                
             else:
                 # Pour les listings de la carte (ancienne structure)
                 url = item.get("for_sale_item", {}).get("share_uri") or (
@@ -214,38 +224,41 @@ class SearchFacebook(BaseTool, BaseScraper):
                     url,
                     item.get("listing_type", "unknown"),
                 )
-                
-                                            
+
+                # On publie uniquement les champs titre, image et url selon la structure demandée.
                 self.event_publisher.publish(
                     job_id,
                     "progress",
                     {
-                    "status":"processing",
-                    "message": "Démarage du fetch de la page",
-                    "uri":f"{url}" ,
-                    "item":item
-                    })
-                
-                
-                async with sem:
-                    data = await asyncio.wait_for(
-                        onepage.fetch_page(url,job_id), timeout=timeout_sec
-                    )
-                    
-                self.event_publisher.publish(
-                    job_id,
-                    "progress",
-                    {
-                        "status": "success",
-                        "type":"listings_progress_info",
-                        "message": f"Fetch de la page réussi",
-                        "data":data,
+                        "status": "listing_loading",
+                        "message": "Démarage du fetch de la page",
+                        "title": item.get("title")
+                        or item.get("for_sale_item", {}).get(
+                            "marketplace_listing_title"
+                        ),
+                        "image": item.get("primary_image"),
                         "url": url,
-                        "description_length": len(data.get("description", "") or ""),
-                        "images_count": len(data.get("images", []) or []),
-                        "first_image": (data.get("images", [None])[0] if data.get("images") else None),
                     },
                 )
+
+                async with sem:
+                    data = await asyncio.wait_for(
+                        onepage.fetch_page(url, job_id), timeout=timeout_sec
+                    )
+
+                # self.event_publisher.publish(
+                #     job_id,
+                #     "progress",
+                #     {
+                #         "status": "listing_loading",
+                #         "message": f"Fetch de la page réussi",
+                #         "titre":f"{data.get("description", "") or ""}",
+                #         "image":f"{(data.get("images", [None])[0] if data.get("images") else None)}",
+                #         "data":data,
+                #         "url": url,
+
+                #     },
+                # )
                 # Fusion dans la structure de sortie
                 item.setdefault("details", {})
                 if isinstance(data, dict):
@@ -256,7 +269,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                 item["details"]["source_url"] = url
                 elapsed = asyncio.get_event_loop().time() - start
                 images_count = len(item["details"].get("images", []))
-                
+
                 desc_len = len(item["details"].get("description", "") or "")
                 logger.info(
                     "[enrich] ok _id=%s in %.2fs images=%d desc_len=%d type=%s",
@@ -275,14 +288,13 @@ class SearchFacebook(BaseTool, BaseScraper):
                     item.get("listing_type", "unknown"),
                     e,
                 )
-                
+
                 self.event_publisher.publish(
                     job_id,
                     "Error",
                     {
                         "status": "Error",
                         "message": f"Erreur lors de la recherche d'appartement ",
-                        
                     },
                 )
             return item
@@ -314,15 +326,11 @@ class SearchFacebook(BaseTool, BaseScraper):
                 "url": normalized[0].get("url"),
             }
 
-                
             self.event_publisher.publish(
                 job_id,
                 "progress",
-                {
-                    "message": f"{sample.get('title')}",
-                    "sample":sample
-                }
-                                         )
+                {"message": f"{sample.get('title')}", "sample": sample},
+            )
             logger.info("[execute_async] normalized sample: %s", sample)
             logger.info("[execute_async] normalized: %s", normalized)
         logger.debug(
@@ -481,7 +489,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return headers, payload, variables
 
-    def add_feed_listings(self, body):
+    def add_feed_listings(self, body,job_id):
         """
         Traite les données du feed marketplace et extrait les informations importantes des listings.
         Structure: data.viewer.marketplace_feed_stories.edges
@@ -580,6 +588,14 @@ class SearchFacebook(BaseTool, BaseScraper):
 
                     # Ajout à la liste des listings
                     listings.append(filtered_data)
+                    self.event_publisher.publish(job_id,"progress",
+                        {
+                        "status":"listing_loading",
+                        "title":title,
+                        "image":image_uri,
+                        "url":f"https://www.facebook.com/marketplace/item/{listing_id}/"  
+                        }                
+                                        ) 
                     logger.info(f"✅ Listing ajouté: {title} - {price_text} - {city}")
 
                 else:
@@ -795,7 +811,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return page_info
 
-    async def scrape(self, lat, lon, query, user_id: str, progress=None):
+    async def scrape(self, lat, lon, query, user_id: str, job_id, progress=None):
         print("Initialisation de fb_graphql_call...")
 
         for attempt in range(self.max_retries):
@@ -901,7 +917,8 @@ class SearchFacebook(BaseTool, BaseScraper):
 
                     if "marketplace_feed_stories" in viewer_data:
                         logger.info("📰 Traitement des données du feed")
-                        listings = self.add_feed_listings(response_data)
+
+                        listings = self.add_feed_listings(response_data,job_id)
                     else:
                         logger.info("⚠️ Type de données non reconnu")
 
@@ -930,10 +947,19 @@ class SearchFacebook(BaseTool, BaseScraper):
 
             except Exception as e:
                 print(f"Erreur lors de la tentative {attempt + 1}: {e}")
+
                 if attempt < self.max_retries - 1:
+                    self.event_publisher.publish(
+                        job_id,
+                        "error",
+                        {
+                            "message": f"erreur lors de la tentative {attempt} je vais reéssayer "
+                        },
+                    )
                     sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                     print(f"Nouvelle tentative dans {sleep_time} secondes...")
                     time.sleep(sleep_time)
+
                 else:
                     print("Nombre maximum de tentatives atteint")
                     raise RuntimeError(f"Unexpected error during GraphQL call: {e}")

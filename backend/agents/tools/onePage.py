@@ -1,3 +1,4 @@
+from utils import event_publisher
 from agents.tools.base_tool import BaseTool
 from agents.tools.bases.base_scraper import BaseScraper
 from utils.event_publisher import EventPublisher
@@ -389,6 +390,8 @@ class OnePage(BaseTool, BaseScraper):
                     logger.exception(
                         "[OnePage.fetch_page] fallback HTML parse error: %s", e
                     )
+                    
+                    self.event_publisher.publish(job_id,"error",{"message":"Error lors du scraping"})
 
             out = {
                 "description": description,

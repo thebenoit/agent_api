@@ -513,7 +513,7 @@ class IanGraph:
         try:
             graph_builder.add_edge(START, "chatbot")
             graph_builder.add_conditional_edges("chatbot", tools_condition)
-            graph_builder.add_edge("tools", "chatbot")
+            # graph_builder.add_edge("tools", "chatbot")
             logger.info("Edges ajoutés avec succès")
         except Exception as e:
             logger.error(f"Erreur ajout des edges: {e}")

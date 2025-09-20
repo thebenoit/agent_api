@@ -162,7 +162,14 @@ async def job_events(job_id: str):
                 except Exception as e:
                     pass
 
-        return StreamingResponse(event_generator(), media_type="text/event-stream")
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+    },
+)
     except Exception as e:
         logger.error(f"Erreur lors de l'initialisation de job_events: {e}")
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")

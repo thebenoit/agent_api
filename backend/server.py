@@ -153,7 +153,6 @@ async def job_events(job_id: str):
 
                     if message and message.get("type") == "message":
                         data = message.get("data", "")
-                        yield f"event: {event_name}"
                         yield f"data: {data}\n\n"
                     await asyncio.sleep(0.05)
             finally:

@@ -152,17 +152,9 @@ async def job_events(job_id: str):
                     message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
 
                     if message and message.get("type") == "message":
-                        raw = message.get("data", "")
-                        try:
-                            obj = json.loads(raw)            # ton worker publie déjà du JSON
-                            event_name = obj.get("event", "message")  # ex: "progress", "completed"
-                            # on renvoie un vrai SSE avec un nom d’événement
-                            yield f"event: {event_name}\n"
-                            yield f"data: {json.dumps(obj)}\n\n"
-                        except Exception:
-                            # fallback si jamais ce n’est pas du JSON
-                            yield f"data: {raw}\n\n"
-
+                        data = message.get("data", "")
+                        yield f"event: {event_name}"
+                        yield f"data: {data}\n\n"
                     await asyncio.sleep(0.05)
             finally:
                 try:

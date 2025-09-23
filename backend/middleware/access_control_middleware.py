@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from database_manager import mongo_manager
 from bson import ObjectId
 import logging
+from config.constants import DAILY_FREE_LIMIT
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
@@ -51,9 +52,9 @@ class AccessControlMiddleware:
             current_count = usage.get("count", 0)
 
         # Vérifier limite pour utilisateur gratuit
-        if current_count >= 3:
+        if current_count >= DAILY_FREE_LIMIT:
             return False, {
-                "limit": 3,
+                "limit": DAILY_FREE_LIMIT,
                 "remaining": 0,
                 "reason": "limit_reached",
                 "resetAt": f"{today}T23:59:59Z",
@@ -63,7 +64,10 @@ class AccessControlMiddleware:
         res = await self.users.update_one(
             {
                 "_id": oid,
-                "$or": [{"usage": {"$exists": False}}, {"usage.count": {"$lt": 3}}],
+                "$or": [
+                    {"usage": {"$exists": False}},
+                    {"usage.count": {"$lt": DAILY_FREE_LIMIT}},
+                ],
             },
             {
                 "$set": {"usage.day": today, "hasAccess": False},
@@ -71,8 +75,8 @@ class AccessControlMiddleware:
             },
         )
         if res.modified_count == 1:
-            remaining = 2 - current_count
-            return True, {"limit": 3, "remaining": remaining}
+            remaining = DAILY_FREE_LIMIT - 1 - current_count
+            return True, {"limit": DAILY_FREE_LIMIT, "remaining": remaining}
 
         return False, {"reason": "concurrent_limit_reached"}
 

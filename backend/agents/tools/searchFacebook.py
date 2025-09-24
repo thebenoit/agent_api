@@ -102,13 +102,22 @@ class SearchFacebook(BaseTool, BaseScraper):
             job_id,
             "progress",
             {
-                "status": "user_pref",
-                "message": "preferences du user",
-                "input": input,
+                "stage": "init",
+                "message": "Initialisation du moteur de recherche",
+                "input": inputs,
             },
         )
 
         print("inputs: ", inputs)
+        self.event_publisher.publish(
+            job_id,
+            "progress",
+            {
+                "stage": "loc",
+                "message": "Géolocalisation des critères",
+            },
+        )
+
         # query = {"lat":"40.7128","lon":"-74.0060","bedrooms":2,"minBudget":80000,"maxBudget":100000,"bedrooms":3,"minBedrooms":3,"maxBedrooms":4}
         listings = asyncio.run(
             self.scrape(inputs["lat"], inputs["lon"], inputs, user_id, job_id)
@@ -116,6 +125,14 @@ class SearchFacebook(BaseTool, BaseScraper):
         if not listings:
             listings = []
             print("Aucune annonce trouvée: ")
+            self.event_publisher.publish(
+                job_id,
+                "progress",
+                {
+                    "stage": "empty",
+                    "message": "Aucune annonce trouvée pour l'instant",
+                },
+            )
             # print("listings: ", listings)
 
         return listings
@@ -291,10 +308,10 @@ class SearchFacebook(BaseTool, BaseScraper):
 
                 self.event_publisher.publish(
                     job_id,
-                    "Error",
+                    "error",
                     {
-                        "status": "Error",
-                        "message": f"Erreur lors de la recherche d'appartement ",
+                        "status": "error",
+                        "message": "Erreur lors de la recherche d'appartement",
                     },
                 )
             return item
@@ -308,6 +325,14 @@ class SearchFacebook(BaseTool, BaseScraper):
             enriched = await asyncio.gather(*(enrich(li) for li in targets))
             listings[: len(enriched)] = enriched
             logger.info("[execute_async] enrich terminé: %d items", len(enriched))
+            self.event_publisher.publish(
+                job_id,
+                "progress",
+                {
+                    "stage": "enrich",
+                    "message": "Mise en forme des meilleurs résultats",
+                },
+            )
 
         # Optionnel: normaliser la structure retournée
         logger.debug("[execute_async] normalisation de la sortie...")
@@ -443,9 +468,28 @@ class SearchFacebook(BaseTool, BaseScraper):
             return {}
 
     def init_session(
-        self, user_id, session, lat, lon, minBudget, maxBudget, minBedrooms, maxBedrooms
+        self,
+        user_id,
+        session,
+        lat,
+        lon,
+        minBudget,
+        maxBudget,
+        minBedrooms,
+        maxBedrooms,
+        job_id,
     ):
         logger.info("init_session")
+
+        self.event_publisher.publish(
+            job_id,
+            "progress",
+            {
+                "status": "user_pref",
+                "message": "Configuration de session Facebook",
+                "input": input,
+            },
+        )
 
         headers, payload, resp_body = FacebookSessionModel().init_fb_session(user_id)
 
@@ -458,6 +502,15 @@ class SearchFacebook(BaseTool, BaseScraper):
                 return None, None, None
 
             except Exception as e:
+                self.event_publisher.publish(
+                    job_id,
+                    "error",
+                    {
+                        "status": "user_pref",
+                        "message": "Erreur lors de l'obtention de la première requête",
+                        "input": input,
+                    },
+                )
                 logger.info(
                     f"Erreur lors de l'obtention de la première requête : {e} header: {headers}\n"
                 )
@@ -489,7 +542,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         return headers, payload, variables
 
-    def add_feed_listings(self, body,job_id):
+    def add_feed_listings(self, body, job_id):
         """
         Traite les données du feed marketplace et extrait les informations importantes des listings.
         Structure: data.viewer.marketplace_feed_stories.edges
@@ -588,14 +641,24 @@ class SearchFacebook(BaseTool, BaseScraper):
 
                     # Ajout à la liste des listings
                     listings.append(filtered_data)
-                    self.event_publisher.publish(job_id,"progress",
+                    self.event_publisher.publish(
+                        job_id,
+                        "progress",
                         {
-                        "status":"listing_loading",
-                        "title":title,
-                        "image":image_uri,
-                        "url":f"https://www.facebook.com/marketplace/item/{listing_id}/"  
-                        }                
-                                        ) 
+                            "status": "listing_loading",
+                            "title": title,
+                            "image": image_uri,
+                            "url": f"https://www.facebook.com/marketplace/item/{listing_id}/",
+                        },
+                    )
+                    self.event_publisher.publish(
+                        job_id,
+                        "progress",
+                        {
+                            "stage": "listing_found",
+                            "message": f"Annonce repérée : {title[:40]}…",
+                        },
+                    )
                     logger.info(f"✅ Listing ajouté: {title} - {price_text} - {city}")
 
                 else:
@@ -824,6 +887,15 @@ class SearchFacebook(BaseTool, BaseScraper):
                     "https": os.getenv("PROXIES_URL"),
                 }
                 session.proxies.update(proxies)
+                self.event_publisher.publish(
+                    job_id,
+                    "progress",
+                    {
+                        "status": "user_pref",
+                        "message": "proxy configurée",
+                        "input": input,
+                    },
+                )
                 print("proxies updated... done")
                 session.verify = False
                 print("query: ", query)
@@ -842,15 +914,34 @@ class SearchFacebook(BaseTool, BaseScraper):
                     maxBudget,
                     minBedrooms,
                     maxBedrooms,
+                    job_id,
                 )
 
                 if headers is None or payload is None:
                     logger.info(
                         f"Session non initialisée pour user {user_id}, tentative {attempt + 1}"
                     )
+                    self.event_publisher.publish(
+                        job_id,
+                        "progress",
+                        {
+                            "status": "user_pref",
+                            "message": f"Session non initialisée pour user, tentative {attempt + 1}",
+                            "input": input,
+                        },
+                    )
                     if attempt < self.max_retries - 1:
                         sleep_time = (
                             self.retry_delay + (attempt + 1) + random.uniform(1, 5)
+                        )
+                        self.event_publisher.publish(
+                            job_id,
+                            "progress",
+                            {
+                                "status": "user_pref",
+                                "message": f"Nouvelle tentative dans {sleep_time} secondes..",
+                                "input": input,
+                            },
                         )
                         logger.info(f"Nouvelle tentative dans {sleep_time} secondes...")
                         time.sleep(sleep_time)
@@ -864,6 +955,15 @@ class SearchFacebook(BaseTool, BaseScraper):
                 resp_body = session.post(
                     "https://www.facebook.com/api/graphql/",
                     data=urllib.parse.urlencode(payload),
+                )
+                self.event_publisher.publish(
+                    job_id,
+                    "progress",
+                    {
+                        "status": "user_pref",
+                        "message": f"GraphQL Response status={resp_body.status_code}",
+                        "input": input,
+                    },
                 )
                 logger.info(
                     f"[DEBUG] GraphQL Response status={resp_body.status_code}\n"
@@ -918,7 +1018,25 @@ class SearchFacebook(BaseTool, BaseScraper):
                     if "marketplace_feed_stories" in viewer_data:
                         logger.info("📰 Traitement des données du feed")
 
-                        listings = self.add_feed_listings(response_data,job_id)
+                        self.event_publisher.publish(
+                            job_id,
+                            "progress",
+                            {
+                                "status": "user_pref",
+                                "message": f"Traitement des données du feed",
+                                "input": input,
+                            },
+                        )
+
+                        listings = self.add_feed_listings(response_data, job_id)
+                        self.event_publisher.publish(
+                            job_id,
+                            "progress",
+                            {
+                                "stage": "feed_parsed",
+                                "message": f"{len(listings)} annonces détectées",
+                            },
+                        )
                     else:
                         logger.info("⚠️ Type de données non reconnu")
 
@@ -933,6 +1051,15 @@ class SearchFacebook(BaseTool, BaseScraper):
                     return listings
 
                 except Exception as e:
+                    self.event_publisher.publish(
+                        job_id,
+                        "error",
+                        {
+                            "status": "user_pref",
+                            "message": f"Erreur lors de la vérification des données",
+                            "input": input,
+                        },
+                    )
                     logger.info(f"Erreur lors de la vérification des données: {e}")
                     raise
 
@@ -953,7 +1080,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                         job_id,
                         "error",
                         {
-                            "message": f"erreur lors de la tentative {attempt} je vais reéssayer "
+                            "message": f"Erreur lors de la tentative {attempt + 1}. Nouvelle tentative bientôt."
                         },
                     )
                     sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
@@ -962,6 +1089,11 @@ class SearchFacebook(BaseTool, BaseScraper):
 
                 else:
                     print("Nombre maximum de tentatives atteint")
+                    self.event_publisher.publish(
+                        job_id,
+                        "error",
+                        {"message": "Nombre maximum de tentatives atteint."},
+                    )
                     raise RuntimeError(f"Unexpected error during GraphQL call: {e}")
 
             # Délai entre les tentatives principales

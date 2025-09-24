@@ -391,7 +391,7 @@ class OnePage(BaseTool, BaseScraper):
                         "[OnePage.fetch_page] fallback HTML parse error: %s", e
                     )
                     
-                    self.event_publisher.publish(job_id,"error",{"message":"Error lors du scraping"})
+                    self.event_publisher.publish(job_id,"error",{"message":"Erreur lors du scraping"})
 
             out = {
                 "description": description,

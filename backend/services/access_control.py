@@ -2,7 +2,7 @@ import datetime as dt
 from typing import Tuple, Dict, Any
 from database_manager import mongo_manager
 from bson import ObjectId
-from config.constants import DAILY_FREE_LIMIT
+from config.constants import DAILY_FREE_LIMIT, DAILY_FREE_LIMIT_WITH_PHONE
 
 
 class AccessControlService:
@@ -23,7 +23,7 @@ class AccessControlService:
 
         today = self._today()
         user = await self.users.find_one(
-            {"_id": oid}, {"hasAccess": 1, "usage": 1, "email": 1}
+            {"_id": oid}, {"hasAccess": 1, "usage": 1, "email": 1,"phone": 1}
         )
         if not user:
             return {}
@@ -50,9 +50,15 @@ class AccessControlService:
 
         if user.get("hasAccess"):
             return (9999, 9999)
+        
+        has_phone = bool(user.get("phone") and user.get("phone").strip())
+        
+        if has_phone:
+            limit = DAILY_FREE_LIMIT_WITH_PHONE 
+        else:
+            limit = DAILY_FREE_LIMIT
 
         usage = user.get("usage") or {"count": 0}
-        limit = DAILY_FREE_LIMIT
         remaining = max(0, limit - int(usage.get("count", 0)))
         return (limit, remaining)
 
@@ -82,13 +88,18 @@ class AccessControlService:
         # A le premium
         if premium_doc.get("hasAccess") is True:
             return (True, {"premium": True})
+        
+        user_doc = await self.users.find_one({"_id":oid},{"phone":1})
+        has_phone = bool(user_doc.get("phone") and user_doc.get("phone").strip())
+        limit = DAILY_FREE_LIMIT_WITH_PHONE if has_phone else DAILY_FREE_LIMIT
+        
 
         res = await self.users.update_one(
             {
                 "_id": oid,
                 "$or": [
                     {"usage": {"exist": False}},
-                    {"usage.count": {"$lt": DAILY_FREE_LIMIT}},
+                    {"usage.count": {"$lt": limit}},
                 ],
             },
             {
@@ -98,7 +109,7 @@ class AccessControlService:
         )
 
         if res.modified_count == 1:
-            limit = remaining = await self.get_limit_and_remaining(user_id)
+            limit, remaining = await self.get_limit_and_remaining(user_id)
             return (True, {"limit": limit, "remaining": remaining})
 
         limit, remaining = await self.get_limit_and_remaining(user_id)
@@ -106,8 +117,9 @@ class AccessControlService:
             False,
             {
                 "limit": limit,
-                "remaining": remaining,
+                "remaining": remaining,  
                 "reason": "limit_reached",
                 "resetAt": f"{today}T23:59:59Z",
             },
         )
+        

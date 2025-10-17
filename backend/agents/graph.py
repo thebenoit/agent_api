@@ -428,8 +428,25 @@ class IanGraph:
                         break
 
         except Exception as e:
-            logger.error(f"error_getting_response: {e}")
-            raise e
+            logger.error(f"error_getting_response: {e}", exc_info=True)
+            # ✅ NOUVEAU : Envoyer l'erreur au frontend via SSE au lieu de raise
+            error_message = str(e)
+            if "timeout" in error_message.lower():
+                user_message = "La requête a pris trop de temps. Réessayez dans quelques instants."
+            elif "rate limit" in error_message.lower():
+                user_message = "Trop de requêtes. Veuillez patienter quelques secondes."
+            elif "openai" in error_message.lower():
+                user_message = "Erreur de communication avec le serveur. Réessayez."
+            else:
+                user_message = "Une erreur s'est produite. Veuillez réessayer."
+            
+            error_payload = {
+                "type": "stream_error",
+                "message": user_message,
+                "details": error_message,  # Pour le debugging
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield f"data: {json.dumps({'type': '[DONE]'})}\n\n"
 
     async def _get_response(
         self,

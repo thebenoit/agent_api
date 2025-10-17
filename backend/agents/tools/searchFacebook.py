@@ -925,9 +925,8 @@ class SearchFacebook(BaseTool, BaseScraper):
                         job_id,
                         "progress",
                         {
-                            "status": "user_pref",
+                            "status": "attempt_failed",
                             "message": f"Session non initialisée pour user, tentative {attempt + 1}",
-                            "input": input,
                         },
                     )
                     if attempt < self.max_retries - 1:
@@ -938,9 +937,8 @@ class SearchFacebook(BaseTool, BaseScraper):
                             job_id,
                             "progress",
                             {
-                                "status": "user_pref",
-                                "message": f"Nouvelle tentative dans {sleep_time} secondes..",
-                                "input": input,
+                                "status": "attempt_failed",
+                                "message": f"Erreur lors de la tentative {attempt + 1}. Nouvelle tentative dans {int(sleep_time)}s.",
                             },
                         )
                         logger.info(f"Nouvelle tentative dans {sleep_time} secondes...")
@@ -1051,41 +1049,49 @@ class SearchFacebook(BaseTool, BaseScraper):
                     return listings
 
                 except Exception as e:
-                    self.event_publisher.publish(
-                        job_id,
-                        "error",
-                        {
-                            "status": "user_pref",
-                            "message": f"Erreur lors de la vérification des données",
-                            "input": input,
-                        },
-                    )
                     logger.info(f"Erreur lors de la vérification des données: {e}")
+                    # Laisser la gestion du retry à l'exception externe
                     raise
 
             except KeyError as e:
                 logger.error(f"Clé manquante dans la session pour user {user_id}: {e}")
                 if attempt < self.max_retries - 1:
                     sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
+                    self.event_publisher.publish(
+                        job_id,
+                        "progress",
+                        {
+                            "status": "attempt_failed",
+                            "message": f"Données manquantes (clé {str(e)}). Nouvelle tentative dans {int(sleep_time)}s.",
+                        },
+                    )
                     logger.info(f"Nouvelle tentative dans {sleep_time} secondes...")
                     time.sleep(sleep_time)
+                    continue
                 else:
+                    self.event_publisher.publish(
+                        job_id,
+                        "error",
+                        {"message": f"Invalid session data: missing key {e}"},
+                    )
                     raise RuntimeError(f"Invalid session data: missing key {e}")
 
             except Exception as e:
                 print(f"Erreur lors de la tentative {attempt + 1}: {e}")
 
                 if attempt < self.max_retries - 1:
+                    sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                     self.event_publisher.publish(
                         job_id,
-                        "error",
+                        "progress",
                         {
-                            "message": f"Erreur lors de la tentative {attempt + 1}. Nouvelle tentative bientôt."
+                            "status": "attempt_failed",
+                            "message": f"Erreur lors de la tentative {attempt + 1}. Nouvelle tentative dans {int(sleep_time)}s.",
                         },
                     )
-                    sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
                     print(f"Nouvelle tentative dans {sleep_time} secondes...")
                     time.sleep(sleep_time)
+                    continue
 
                 else:
                     print("Nombre maximum de tentatives atteint")

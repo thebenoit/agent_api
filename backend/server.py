@@ -146,22 +146,53 @@ async def job_events(job_id: str):
         pubsub.subscribe(channel)
 
         async def event_generator():
+            timeout_counter = 0
+            max_empty_iterations = 600  # 30 secondes (600 * 0.05s) sans message = timeout
+            
             try:
-                while True:  # Boucle infinie pour écouter les événements
+                while True:
                     # ecoute les messages de redis
                     message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
 
                     if message and message.get("type") == "message":
                         data = message.get("data", "")
                         yield f"data: {data}\n\n"
+                        timeout_counter = 0  # Reset le compteur si on reçoit un message
+                    else:
+                        timeout_counter += 1
+                        
+                        # ✅ NOUVEAU : Timeout après 30s sans message
+                        if timeout_counter >= max_empty_iterations:
+                            logger.warning(f"Job {job_id}: Timeout SSE après 30s sans événement")
+                            error_event = json.dumps({
+                                "event": "error",
+                                "payload": {
+                                    "message": "Le traitement prend plus de temps que prévu. Veuillez réessayer.",
+                                    "status": "timeout"
+                                }
+                            })
+                            yield f"data: {error_event}\n\n"
+                            break
+                    
                     await asyncio.sleep(0.05)
+                    
+            except Exception as e:
+                # ✅ NOUVEAU : Envoyer l'erreur au client au lieu de crash silencieux
+                logger.error(f"Job {job_id}: Erreur dans event_generator: {e}", exc_info=True)
+                error_event = json.dumps({
+                    "event": "error",
+                    "payload": {
+                        "message": "Une erreur s'est produite lors du traitement.",
+                        "status": "error"
+                    }
+                })
+                yield f"data: {error_event}\n\n"
             finally:
                 try:
-                    
                     pubsub.unsubscribe(channel)
                     pubsub.close()
                 except Exception as e:
-                    pass
+                    logger.warning(f"Erreur lors de la fermeture du pubsub: {e}")
 
         return StreamingResponse(
             event_generator(),

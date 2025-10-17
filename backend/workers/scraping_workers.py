@@ -380,7 +380,8 @@ class ScrapingWorker:
                 rq_job = get_current_job()
                 job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
                 self._event_publisher.publish(job_id, "error", error_payload)
-                return []
+                # Propager l'exception pour que le job soit marqué en échec et éviter un 'completed' vide
+                raise
 
         except Exception as e:
             logger.error(f"Erreur dans _scrape_facebook_sync: {e}")
@@ -393,7 +394,8 @@ class ScrapingWorker:
             rq_job = get_current_job()
             job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
             self._event_publisher.publish(job_id, "error", error_payload)
-            return []
+            # Propager pour que le niveau supérieur traite l'échec
+            raise
 
     def get_metrics(self) -> dict[str, Any]:
         """

@@ -306,12 +306,13 @@ class SearchFacebook(BaseTool, BaseScraper):
                     e,
                 )
 
+                # ✅ Message d'erreur plus clair avec instruction de réessayer
                 self.event_publisher.publish(
                     job_id,
                     "error",
                     {
                         "status": "error",
-                        "message": "Erreur lors de la recherche d'appartement",
+                        "message": "Erreur lors du chargement des détails. Veuillez réessayer votre recherche.",
                     },
                 )
             return item
@@ -502,13 +503,13 @@ class SearchFacebook(BaseTool, BaseScraper):
                 return None, None, None
 
             except Exception as e:
+                # ✅ Message d'erreur plus clair avec instruction de réessayer
                 self.event_publisher.publish(
                     job_id,
                     "error",
                     {
-                        "status": "user_pref",
-                        "message": "Erreur lors de l'obtention de la première requête",
-                        "input": input,
+                        "status": "session_error",
+                        "message": "Erreur de connexion à Facebook. Veuillez réessayer votre recherche.",
                     },
                 )
                 logger.info(

@@ -167,7 +167,7 @@ async def job_events(job_id: str):
                             error_event = json.dumps({
                                 "event": "error",
                                 "payload": {
-                                    "message": "Le traitement prend plus de temps que prévu. Veuillez réessayer.",
+                                    "message": "⚠️ La recherche prend plus de temps que prévu. Veuillez réessayer votre recherche.",
                                     "status": "timeout"
                                 }
                             })
@@ -182,7 +182,7 @@ async def job_events(job_id: str):
                 error_event = json.dumps({
                     "event": "error",
                     "payload": {
-                        "message": "Une erreur s'est produite lors du traitement.",
+                        "message": "⚠️ Une erreur s'est produite lors du traitement. Veuillez réessayer votre recherche.",
                         "status": "error"
                     }
                 })

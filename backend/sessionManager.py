@@ -2,6 +2,7 @@ import os
 import time
 import json
 import requests
+import logging
 from pymongo import MongoClient
 import seleniumwire.undetected_chromedriver as uc
 from seleniumwire import webdriver as sw
@@ -22,6 +23,9 @@ from crawl4ai import CacheMode
 from crawl4ai import AsyncWebCrawler
 
 
+
+
+
 import random
 from models.fb_sessions import FacebookSessionModel
 from schemas.fb_session import FacebookSession
@@ -34,6 +38,9 @@ class SessionsManager:
     """
 
     def __init__(self):
+        # Configurer le logger pour cette classe
+        self.logger = logging.getLogger(__name__)
+        
         self.driver = os.getenv("DRIVER_PATH")
         self.user_id = "66bd41ade6e37be2ef4b4fc2"  # User ID fixe
         self.fb_session_model = FacebookSessionModel()
@@ -43,7 +50,7 @@ class SessionsManager:
         self.proxies = ProxyConfig.from_env()  # ProxyConfig.from_env()
         # eg: export PROXIES="ip1:port1:username1:password1,ip2:port2:username2:password2"
         if not self.proxies:
-            print("No proxies found in environment. Set PROXIES env variable!")
+            self.logger.warning("No proxies found in environment. Set PROXIES env variable!")
             return
 
         self.proxy_config = ProxyConfig(
@@ -53,7 +60,7 @@ class SessionsManager:
         )
 
         if not self.proxy_config:
-            print(
+            self.logger.warning(
                 "No proxy config found in environment. Set PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD env variables!"
             )
             return
@@ -69,7 +76,7 @@ class SessionsManager:
                 data = json.load(f)
                 return data.get("cities", [])
         except Exception as e:
-            print(f"Erreur lors du chargement des villes: {e}")
+            self.logger.error(f"Erreur lors du chargement des villes: {e}", exc_info=True)
             # Fallback vers Montreal si erreur
             return [
                 {
@@ -94,7 +101,7 @@ class SessionsManager:
         city_index = user_hash % len(self.cities)
 
         selected_city = self.cities[city_index]
-        print(
+        self.logger.info(
             f"[City] Ville sélectionnée pour {user_id[:8]}: {selected_city['name']}, {selected_city['country']}"
         )
         return selected_city
@@ -164,9 +171,10 @@ class SessionsManager:
 
     @staticmethod
     def extract_request_headers_from_result(result):
+        logger = logging.getLogger(__name__)
         graphql_data = []
         if not result or not getattr(result, "network_requests", None):
-            print("return req headers results: ")
+            logger.debug("return req headers results: ")
             return graphql_data
 
         def get_req_headers(req):
@@ -230,7 +238,7 @@ class SessionsManager:
                 coords = self.generate_user_specific_coordinates(user_id)
                 city_data = self._select_city_for_user(user_id)
                 url = self._generate_facebook_marketplace_url(city_data)
-                print(
+                self.logger.info(
                     f"[User {user_id[:8]}] URL générée avec coordonnées personnalisées"
                 )
 
@@ -256,7 +264,7 @@ class SessionsManager:
 
             # Keep a persistent session to run JS steps (close modal, map nudges) in the same tab
             session_identifier = f"fb_session_{int(time.time())}"
-            print(f"[crawl] starting session: {session_identifier} url={url}")
+            self.logger.info(f"[crawl] starting session: {session_identifier} url={url}")
 
             crawler_config = CrawlerRunConfig(
                 # url=url,
@@ -278,7 +286,7 @@ class SessionsManager:
                 crawler_strategy=crawler_strategy, config=browser_config
             ) as crawler:
 
-                print("[crawl] initial load...")
+                self.logger.info("[crawl] initial load...")
                 result = await crawler.arun(url=url, config=crawler_config)
 
                 if result.success:
@@ -297,11 +305,11 @@ class SessionsManager:
                             )
                             if isinstance(u, str) and "graphql" in u.lower():
                                 total_graphql += 1
-                    print(
+                    self.logger.info(
                         f"[crawl] initial load ok: network_requests={total_reqs} graphql={total_graphql}"
                     )
                     # Give the page extra time to fully settle before interacting
-                    print(
+                    self.logger.info(
                         "[crawl] waiting ~10s for page to fully settle before actions..."
                     )
                     rnd_sleep = random.randint(7, 20)
@@ -309,13 +317,13 @@ class SessionsManager:
                     reqs = self.extract_request_headers_from_result(result)
                     if reqs:
                         # self._save_session_to_db(reqs, "initial_load", user_id)
-                        print("[crawl] GraphQL requests found on initial load:")
+                        self.logger.info("[crawl] GraphQL requests found on initial load:")
                     else:
-                        print("[crawl] No GraphQL requests found on initial load")
+                        self.logger.warning("[crawl] No GraphQL requests found on initial load")
                         # return None
 
                     # Try to close the login modal (X/labels/Escape)
-                    print("[modal] attempting to close modal (X/labels/Escape)...")
+                    self.logger.info("[modal] attempting to close modal (X/labels/Escape)...")
                     close_modal_config = CrawlerRunConfig(
                         session_id=session_identifier,
                         js_only=True,
@@ -367,7 +375,7 @@ class SessionsManager:
                                 )
                                 if isinstance(u, str) and "graphql" in u.lower():
                                     m_graphql += 1
-                            print(
+                            self.logger.info(
                                 f"[modal] step executed: network_requests={m_total} graphql={m_graphql}"
                             )
                             reqs_after = self.extract_request_headers_from_result(
@@ -377,12 +385,12 @@ class SessionsManager:
                             # self._save_session_to_db(
                             #     reqs_after, "after_modal", user_id
                             # )
-                    except Exception:
-                        print("[modal] step failed (ignored)")
+                    except Exception as e:
+                        self.logger.warning("[modal] step failed (ignored)", exc_info=True)
 
                     # Click Zoom In (+) multiple times with short waits
                     async def perform_zoom_in(times: int = 3, delay_ms: int = 1000):
-                        print(f"[zoom] clicking + {times}x, delay ~{delay_ms}ms")
+                        self.logger.info(f"[zoom] clicking + {times}x, delay ~{delay_ms}ms")
                         for i in range(1, times + 1):
                             zoom_in_cfg = CrawlerRunConfig(
                                 session_id=session_identifier,
@@ -444,26 +452,26 @@ class SessionsManager:
                                             and "graphql" in u.lower()
                                         ):
                                             z_graphql += 1
-                                    print(
+                                    self.logger.info(
                                         f"[zoom {i}/{times}] executed: network_requests={z_total} graphql={z_graphql} headers_dumped={len(reqs_zoom) if reqs_zoom else 0}"
                                     )
                                     if reqs_zoom:
                                         self._save_session_to_db(
                                             reqs_zoom, f"after_zoom_{i}", user_id
                                         )
-                            except Exception:
-                                print(f"[zoom {i}/{times}] step failed (ignored)")
+                            except Exception as e:
+                                self.logger.warning(f"[zoom {i}/{times}] step failed (ignored)", exc_info=True)
 
                     rnd_delay = random.randint(1000, 3000)
                     await perform_zoom_in(times=3, delay_ms=rnd_delay)
                     return result
 
                 else:
-                    print("Crawler failed to load the page: ", result.error_message)
+                    self.logger.error(f"Crawler failed to load the page: {result.error_message}")
                     return None
 
         except Exception as e:
-            print("Error initializing crawler strategy:", e)
+            self.logger.error("Error initializing crawler strategy:", exc_info=True)
             return None
 
     def extract_payload_from_crawl_data(self, requests_data):
@@ -524,7 +532,7 @@ class SessionsManager:
             # Rien de bon trouvé
             return None
         except Exception as e:
-            print(f"[payload] Erreur extraction: {e}")
+            self.logger.error(f"[payload] Erreur extraction: {e}", exc_info=True)
             return None
 
     def _save_session_to_db(self, requests_data, step_label, user_id: str):
@@ -533,7 +541,7 @@ class SessionsManager:
                 return
             extracted = self.extract_payload_from_crawl_data(requests_data)
             if not extracted:
-                print("[DB] Aucun payload exploitable")
+                self.logger.warning("[DB] Aucun payload exploitable")
                 return
 
             headers = extracted["headers"] or {}
@@ -568,7 +576,7 @@ class SessionsManager:
             else:
                 self.fb_session_model.save_session(session_data)
         except Exception as exc:
-            print(f"[DB] Erreur lors de la sauvegarde: {exc}")
+            self.logger.error(f"[DB] Erreur lors de la sauvegarde: {exc}", exc_info=True)
 
     async def create_session_for_user(
         self, user_id: str, force_refresh: bool = False
@@ -582,19 +590,20 @@ class SessionsManager:
                 if existing_session:
                     return True
 
-            print(f"[user {user_id[:8]}] Création de session...")
+            self.logger.info(f"[user {user_id[:8]}] Création de session...")
             success = await self.init_undetected_crawler(user_id)
 
             if success:
-                print(f"[user {user_id[:8]}] Session contient quelque chose")
+                self.logger.info(f"[user {user_id[:8]}] Session contient quelque chose")
                 return True
             else:
-                print(f"[user {user_id[:8]}] Erreur lors de la création de la session")
+                self.logger.error(f"[user {user_id[:8]}] Erreur lors de la création de la session")
                 return False
 
         except Exception as e:
-            print(
-                f"[user {user_id[:8]}] Erreur lors de la création/mise à jour de la session: {e}"
+            self.logger.error(
+                f"[user {user_id[:8]}] Erreur lors de la création/mise à jour de la session: {e}",
+                exc_info=True
             )
             return False
 

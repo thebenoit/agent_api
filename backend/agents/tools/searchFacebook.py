@@ -60,7 +60,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
     def __init__(self):
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        print("initialisation du scraper facebook...")
+        logger.info("initialisation du scraper facebook...")
 
         self.url = "https://www.facebook.com/marketplace/montreal/propertyrentals"
         ##change according to the computer install here: https://googlechromelabs.github.io/chrome-for-testing/#stable
@@ -108,7 +108,7 @@ class SearchFacebook(BaseTool, BaseScraper):
             },
         )
 
-        print("inputs: ", inputs)
+        logger.info("inputs: %s", inputs)
         self.event_publisher.publish(
             job_id,
             "progress",
@@ -124,7 +124,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         )
         if not listings:
             listings = []
-            print("Aucune annonce trouvée: ")
+            logger.info("Aucune annonce trouvée")
             self.event_publisher.publish(
                 job_id,
                 "progress",
@@ -411,11 +411,11 @@ class SearchFacebook(BaseTool, BaseScraper):
         )
 
         # 🆕 Log des headers chargés pour debug
-        print(f"[Headers] Headers chargés: {len(session.headers)} headers")
+        logger.debug("[Headers] Headers chargés: %d headers", len(session.headers))
         if "cookie" in session.headers:
             cookie_header = session.headers["cookie"]
             cookie_count = len(cookie_header.split(";"))
-            print(f"[Headers] Cookies dans session: {cookie_count} cookies")
+            logger.debug("[Headers] Cookies dans session: %d cookies", cookie_count)
 
             # 🆕 Vérifier la qualité des cookies
             important_cookies = ["c_user", "xs", "fr", "datr", "sb"]
@@ -424,11 +424,11 @@ class SearchFacebook(BaseTool, BaseScraper):
             ]
 
             if found_important:
-                print(f"[Headers] ✅ Cookies importants trouvés: {found_important}")
+                logger.debug("[Headers] ✅ Cookies importants trouvés: %s", found_important)
             else:
-                print("[Headers] ⚠️ Aucun cookie important trouvé dans la session")
+                logger.warning("[Headers] ⚠️ Aucun cookie important trouvé dans la session")
         else:
-            print("[Headers] ⚠️ Aucun cookie trouvé dans les headers de session")
+            logger.warning("[Headers] ⚠️ Aucun cookie trouvé dans les headers de session")
 
         return session
 
@@ -465,7 +465,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         try:
             return dict(payload)
         except (TypeError, ValueError):
-            print(f"Warning: Impossible de parser le payload de type {type(payload)}")
+            logger.warning("Impossible de parser le payload de type %s", type(payload))
             return {}
 
     def init_session(
@@ -551,14 +551,14 @@ class SearchFacebook(BaseTool, BaseScraper):
         Args:
             body (dict): Corps de la réponse GraphQL contenant les listings du feed
         """
-        print("🔍 Recherche des listings dans le feed marketplace...")
+        logger.info("🔍 Recherche des listings dans le feed marketplace...")
 
         listings = []
 
         try:
             # Accéder aux edges du feed
             edges = body["data"]["viewer"]["marketplace_feed_stories"]["edges"]
-            print(f"✅ Nombre d'edges trouvées(feed): {len(edges)}")
+            logger.info("✅ Nombre d'edges trouvées(feed): %d", len(edges))
 
             for edge in edges:
                 node = edge["node"]
@@ -660,21 +660,24 @@ class SearchFacebook(BaseTool, BaseScraper):
                             "message": f"Annonce repérée : {title[:40]}…",
                         },
                     )
-                    logger.info(f"✅ Listing ajouté: {title} - {price_text} - {city}")
+                    logger.info("✅ Listing ajouté: %s - %s - %s", title, price_text, city)
 
                 else:
-                    print(
-                        f"⚠️ Type de node non reconnu: {node.get('__typename')} - {node.get('story_type')}"
+                    logger.warning(
+                        "⚠️ Type de node non reconnu: %s - %s",
+                        node.get('__typename'),
+                        node.get('story_type')
                     )
             return listings
 
         except KeyError as e:
-            print(f"❌ Erreur de structure dans le body: {e}")
-            print(
-                f"Clés disponibles: {list(body.get('data', {}).get('viewer', {}).keys())}"
+            logger.error("❌ Erreur de structure dans le body: %s", e)
+            logger.debug(
+                "Clés disponibles: %s",
+                list(body.get('data', {}).get('viewer', {}).keys())
             )
         except Exception as e:
-            print(f"❌ Erreur lors du traitement des listings: {e}")
+            logger.error("❌ Erreur lors du traitement des listings: %s", e)
 
     def normalize_item(self, item: dict) -> dict:
         """Normalise une annonce brute en un objet simple et uniformisé.
@@ -821,7 +824,7 @@ class SearchFacebook(BaseTool, BaseScraper):
             page_driver = self.initialize_driver()
 
         except Exception as e:
-            print(f"Error initializing Chrome driver: {e}")
+            logger.error("Error initializing Chrome driver: %s", e)
             return None
 
         page_info = {
@@ -837,10 +840,10 @@ class SearchFacebook(BaseTool, BaseScraper):
 
         url = f"https://www.facebook.com/marketplace/item/{id}/?ref=category_feed&locale=fr_CA"
 
-        print("Recherche de l'annonce spécifique... ")
-        print("url: ", url)
+        logger.info("Recherche de l'annonce spécifique...")
+        logger.debug("url: %s", url)
         page_driver.get(url)
-        print("wait 5 seconds...")
+        logger.debug("wait 5 seconds...")
         time.sleep(5)
         try:
             # Cherche le bouton X pour fermer le modal
@@ -848,12 +851,12 @@ class SearchFacebook(BaseTool, BaseScraper):
                 By.CSS_SELECTOR, "[aria-label='Fermer']"
             )
             close_button.click()
-            print("modal fermé...")
+            logger.debug("modal fermé...")
 
         except:
-            print("Pas de modal à fermer")
+            logger.debug("Pas de modal à fermer")
 
-        print("wait 5 seconds...")
+        logger.debug("wait 5 seconds...")
         time.sleep(5)
 
         html_content = page_driver.page_source
@@ -861,14 +864,14 @@ class SearchFacebook(BaseTool, BaseScraper):
         # Pretty print the HTML with proper indentation
         soup = BeautifulSoup(html_content, "html.parser")
 
-        print("get le titre")
+        logger.debug("get le titre")
         # title = soup.find("span", class_="f4").text
 
         # # Extraction du titre
         title_element = soup.find("h1", class_=lambda c: c and "x1heor9g" in c)
         if title_element:
             page_info["title"] = title_element.text.strip()
-            print("title", page_info["title"], "\n")
+            logger.info("title: %s", page_info["title"])
 
         # print("title: ", title)
         page_driver.quit()
@@ -876,7 +879,7 @@ class SearchFacebook(BaseTool, BaseScraper):
         return page_info
 
     async def scrape(self, lat, lon, query, user_id: str, job_id, progress=None):
-        print("Initialisation de fb_graphql_call...")
+        logger.info("Initialisation de fb_graphql_call...")
 
         for attempt in range(self.max_retries):
             try:
@@ -897,9 +900,9 @@ class SearchFacebook(BaseTool, BaseScraper):
                         "input": input,
                     },
                 )
-                print("proxies updated... done")
+                logger.debug("proxies updated... done")
                 session.verify = False
-                print("query: ", query)
+                logger.debug("query: %s", query)
                 minBudget = query["minBudget"] or 0
                 maxBudget = query["maxBudget"] or 0
                 minBedrooms = query["minBedrooms"] or 0
@@ -980,8 +983,10 @@ class SearchFacebook(BaseTool, BaseScraper):
                         not in resp_body.json().get("data", {}).get("viewer", {})
                         and retry_count < max_inner_retries
                     ):
-                        print(
-                            f"Pas le bon type de données, tentative interne {retry_count + 1}/{max_inner_retries}"
+                        logger.info(
+                            "Pas le bon type de données, tentative interne %d/%d",
+                            retry_count + 1,
+                            max_inner_retries
                         )
 
                         # Réessayer la requête
@@ -1078,7 +1083,7 @@ class SearchFacebook(BaseTool, BaseScraper):
                     raise RuntimeError(f"Invalid session data: missing key {e}")
 
             except Exception as e:
-                print(f"Erreur lors de la tentative {attempt + 1}: {e}")
+                logger.error("Erreur lors de la tentative %d: %s", attempt + 1, e)
 
                 if attempt < self.max_retries - 1:
                     sleep_time = self.retry_delay + (attempt + 1) + random.uniform(1, 5)
@@ -1090,12 +1095,12 @@ class SearchFacebook(BaseTool, BaseScraper):
                             "message": f"Erreur lors de la tentative {attempt + 1}. Nouvelle tentative dans {int(sleep_time)}s.",
                         },
                     )
-                    print(f"Nouvelle tentative dans {sleep_time} secondes...")
+                    logger.info("Nouvelle tentative dans %.2f secondes...", sleep_time)
                     time.sleep(sleep_time)
                     continue
 
                 else:
-                    print("Nombre maximum de tentatives atteint")
+                    logger.error("Nombre maximum de tentatives atteint")
                     self.event_publisher.publish(
                         job_id,
                         "error",
@@ -1105,7 +1110,7 @@ class SearchFacebook(BaseTool, BaseScraper):
 
             # Délai entre les tentatives principales
             if attempt < self.max_retries - 1:
-                print("Attente 5 secondes avant la prochaine tentative...")
+                logger.debug("Attente 5 secondes avant la prochaine tentative...")
                 time.sleep(5)
 
         # Si on arrive ici, toutes les tentatives ont échoué

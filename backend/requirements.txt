@@ -36,3 +36,4 @@ redis==5.0.1
 rq
 fastuuid<0.12.0
 litellm
+pytest-asyncio

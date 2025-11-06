@@ -1,8 +1,10 @@
-from .session_test import test_get_req_info
-from .test_search_facebook_async import test_search_facebook_async
-from .test import test_user_text_chat
+# Pour importer depuis tests/sessions/session_test.py
+from .sessions.session_test import test_is_functional
 
-__all__ = ["test_get_req_info", 
-           "test_search_facebook_async", 
+
+# Pour importer depuis tests/facebook/test.py
+from .facebook.test import test_user_text_chat
+
+__all__ = ["test_get_req_info",  
            "test_user_text_chat",
            "graphql_test"]

@@ -17,10 +17,14 @@ class EventPublisher:
     def publish(self, job_id: str, event: str, payload: dict) -> None:
         """
         Publie un événement SSE sur le canal Redis du job donné.
-        """
+        """       
+        
         channel = f"sse:job:{job_id}"
         try:
-            message = json.dumps({"event": event, "payload": payload}, default=str)
-            self.redis_client.publish(channel, message)
+            if job_id is None:
+                logger.warning("Job_id est null")
+            else:
+                message = json.dumps({"event": event, "payload": payload}, default=str)
+                self.redis_client.publish(channel, message)
         except Exception as e:
             logger.warning(f"[{job_id}] publish_event error: {e}")

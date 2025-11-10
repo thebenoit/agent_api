@@ -29,7 +29,7 @@ from crawl4ai import AsyncWebCrawler
 import random
 from models.fb_sessions import FacebookSessionModel
 from schemas.fb_session import FacebookSession
-
+from schemas.Metrics.SessionMetrics import SessionMetrics
 
 class SessionsManager:
     """
@@ -44,6 +44,8 @@ class SessionsManager:
         self.driver = os.getenv("DRIVER_PATH")
         self.user_id = "66bd41ade6e37be2ef4b4fc2"  # User ID fixe
         self.fb_session_model = FacebookSessionModel()
+        
+        self.metrics = SessionMetrics() 
 
         self.mongo = MongoClient(os.getenv("MONGO_URI"))
 
@@ -584,27 +586,67 @@ class SessionsManager:
         """
         API pour créer ou mettre a jour une session
         """
+        #Démarrer Chronometre
+        start_time = time.time()
+        
         try:
             if not force_refresh:
                 existing_session = self.fb_session_model.get_session(user_id)
                 if existing_session:
+                    self.logger.info(f"[user {user_id[:8]}] Session existante trouvée, pas de création nécessaire")                    
                     return True
 
             self.logger.info(f"[user {user_id[:8]}] Création de session...")
+            
+            #Creer la session
             success = await self.init_undetected_crawler(user_id)
-
+            
+            duration = time.time() - start_time
+            
+            
             if success:
-                self.logger.info(f"[user {user_id[:8]}] Session contient quelque chose")
+                self.logger.info(
+                    f"[user {user_id[:8]}] ✅ Session créée avec succès en {duration:.2f}s"
+                    )
+                self.metrics.track_session_creation(
+                    user_id=user_id,
+                    duration_seconds=duration,
+                    success=True,
+                    error_message=None
+            )
                 return True
+            
             else:
-                self.logger.error(f"[user {user_id[:8]}] Erreur lors de la création de la session")
+                self.logger.error(
+                    f"[user {user_id[:8]}] ❌ Échec création session après {duration:.2f}s"
+                )
+                
+                self.metrics.track_session_creation(
+                    user_id=user_id,
+                    duration_seconds=duration,
+                    success=False,
+                    error_message="Crawler returned no result"
+                )
                 return False
 
         except Exception as e:
+            # 🆕 Calculer la durée même en cas d'erreur
+            duration = time.time() - start_time
+            
+            error_msg = str(e)
             self.logger.error(
-                f"[user {user_id[:8]}] Erreur lors de la création/mise à jour de la session: {e}",
+                f"[user {user_id[:8]}] ❌ Exception lors de la création de session: {error_msg}",
                 exc_info=True
             )
+            
+            # 🆕 ENREGISTRER LA MÉTRIQUE D'ERREUR
+            self.metrics.track_session_creation(
+                user_id=user_id,
+                duration_seconds=duration,
+                success=False,
+                error_message=error_msg[:500]  # Limiter à 500 chars pour éviter documents trop gros
+            )
+            
             return False
 
     def put_session_on_db():

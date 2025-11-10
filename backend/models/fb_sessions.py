@@ -134,7 +134,7 @@ class FacebookSessionModel:
                 headers = session.get("headers")
                 payload = session.get("payload")
                 variables = session.get("variables")
-                
+
                 # Vérifier que les données nécessaires sont présentes
                 if headers and payload:
                     logger.info(
@@ -155,7 +155,7 @@ class FacebookSessionModel:
             else:
                 logger.warning("Aucune session active trouvée pour user_id=%s", user_id)
                 return None, None, None
-                
+
         except Exception as e:
             logger.error(
                 "Erreur lors de l'initialisation de la session Facebook pour user_id=%s: %s",
@@ -164,3 +164,115 @@ class FacebookSessionModel:
                 exc_info=True
             )
             return None, None, None
+
+    def mark_session_failure(self, user_id: str, reason: str = "Unknown") -> bool:
+        """
+        Enregistre un échec pour une session.
+        Désactive automatiquement si 3 échecs consécutifs.
+        """
+        logger.warning(
+            "Enregistrement d'un échec pour user_id=%s. Raison: %s",
+            user_id,
+            reason
+        )
+
+        try:
+            # Récupérer la session actuelle
+            session_dict = self.get_session(user_id)
+            if not session_dict:
+                logger.error("Impossible de marquer l'échec: session inexistante pour user_id=%s", user_id)
+                return False
+
+            # Créer l'objet pour utiliser la méthode record_failure
+            session = FacebookSession(**session_dict)
+            session.record_failure(reason)
+
+            # Préparer les updates
+            updates = {
+                "failure_count": session.failure_count,
+                "last_failure": session.last_failure,
+                "last_failure_reason": session.last_failure_reason,
+            }
+
+            # Si 3 échecs ou plus, désactiver
+            if session.failure_count >= 3:
+                updates["active"] = False
+                logger.error(
+                    "Session user_id=%s désactivée après %d échecs consécutifs",
+                    user_id,
+                    session.failure_count
+                )
+
+            # Sauvegarder en DB
+            result = self.collection.update_one(
+                {"user_id": user_id},
+                {"$set": updates}
+            )
+
+            return result.modified_count > 0
+
+        except Exception as e:
+            logger.error(
+                "Erreur lors du marquage d'échec pour user_id=%s: %s",
+                user_id,
+                e,
+                exc_info=True
+            )
+            return False
+
+    def mark_session_success(self, user_id: str) -> bool:
+        """
+        Enregistre un succès - remet le compteur d'échecs à 0.
+        """
+        logger.debug("Enregistrement d'un succès pour user_id=%s", user_id)
+
+        try:
+            updates = {
+                "failure_count": 0,
+                "last_success": datetime.utcnow(),
+                "last_used": datetime.utcnow(),
+                "last_failure_reason": None
+            }
+
+            result = self.collection.update_one(
+                {"user_id": user_id, "active": True},
+                {"$set": updates}
+            )
+
+            if result.modified_count > 0:
+                logger.info("Succès enregistré pour user_id=%s, compteur d'échecs remis à 0", user_id)
+
+            return result.modified_count > 0
+
+        except Exception as e:
+            logger.error(
+                "Erreur lors du marquage de succès pour user_id=%s: %s",
+                user_id,
+                e,
+                exc_info=True
+            )
+            return False
+
+    def get_healthy_sessions(self) -> list:
+        """Retourne toutes les sessions saines (failure_count < 3)"""
+        try:
+            sessions = self.collection.find({
+                "active": True,
+                "failure_count": {"$lt": 3}
+            })
+            return list(sessions)
+        except Exception as e:
+            logger.error("Erreur lors de la récupération des sessions saines: %s", e)
+            return []
+
+    def get_degraded_sessions(self) -> list:
+        """Retourne les sessions dégradées (2 échecs)"""
+        try:
+            sessions = self.collection.find({
+                "active": True,
+                "failure_count": 2
+            })
+            return list(sessions)
+        except Exception as e:
+            logger.error("Erreur lors de la récupération des sessions dégradées: %s", e)
+            return []

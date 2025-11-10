@@ -1,6 +1,6 @@
 """Facebook session schema for data validation."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 from pydantic import BaseModel, Field
 # from ..sessionManager import SessionsManager
@@ -29,13 +29,16 @@ class FacebookSession(BaseModel):
     last_used: Optional[datetime] = Field(
         default=None, description="Last usage timestamp"
     )
-    failure_count: int = Field(default=0, description="le nombre de fois que cela échoue")
-    health_status: str
     failure_count: int = Field(default=0, description="Nombre d'échecs consécutifs")
     last_success: Optional[datetime] = Field(default=None, description="Dernière réussite")
     last_failure: Optional[datetime] = Field(default=None, description="Dernier échec")
     last_failure_reason: Optional[str] = Field(default=None, description="Raison du dernier échec")
     
+    
+    @property
+    def health_status(self) -> str:
+        """Calcule automatiquement le statut de santé"""
+        return self.get_health_status()
     def get_health_status(self) -> str:
         """Retourne le statut de santé basé sur les échecs"""
         logger.info(
@@ -106,8 +109,8 @@ class FacebookSession(BaseModel):
             self.failure_count
         )
         self.failure_count = 0  # 🎉 Reset!
-        self.last_success = datetime.now(datetime.UTC)
-        self.last_used = datetime.now(datetime.UTC)
+        self.last_success = datetime.now(timezone.utc)
+        self.last_used = datetime.now(timezone.utc)
         self.last_failure_reason = None
         
         logger.info(

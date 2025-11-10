@@ -6,6 +6,8 @@ from utils import event_publisher
 from seleniumwire import webdriver  # Import from seleniumwire
 import sys
 from models.fb_sessions import FacebookSessionModel
+from schemas.Metrics.SessionMetrics import SessionMetrics
+from schemas.fb_session import FacebookSession
 
 # from setuptools._distutils import version as _version
 # sys.modules['distutils.version'] = _version
@@ -69,10 +71,12 @@ class SearchFacebook(BaseTool, BaseScraper):
         self.filtered_har = None
         self.listings = []
         self.seen_listing_ids = set()
+        self.fb_session_model = FacebookSessionModel()
 
         self.max_retries = 3
         self.retry_delay = 10
         self.event_publisher = EventPublisher()
+        self.metrics = SessionMetrics() 
 
     def execute(
         self,
@@ -481,7 +485,19 @@ class SearchFacebook(BaseTool, BaseScraper):
         job_id,
     ):
         logger.info("init_session")
-
+        session_dict = self.fb_session_model.get_session(user_id)
+        
+        if session_dict:
+            # Créer l'objet pour vérifier la santé
+            fb_session = FacebookSession(**session_dict)
+            
+            if not fb_session.is_healthy():
+                logger.warning(
+                    f"⚠️ Session user {user_id[:8]} est UNHEALTHY "
+                    f"(failure_count={fb_session.failure_count}). "
+                    f"Session désactivée, il faut en créer une nouvelle."
+                )
+                return None, None, None
         self.event_publisher.publish(
             job_id,
             "progress",
@@ -880,8 +896,13 @@ class SearchFacebook(BaseTool, BaseScraper):
 
     async def scrape(self, lat, lon, query, user_id: str, job_id, progress=None):
         logger.info("Initialisation de fb_graphql_call...")
+        
+        search_start_time = time.time()
+        total_retry_count = 0
+        final_listings = []
 
         for attempt in range(self.max_retries):
+            total_retry_count = attempt
             try:
                 # Créer une nouvelle session pour chaque tentative
                 session = requests.Session()
@@ -1038,21 +1059,53 @@ class SearchFacebook(BaseTool, BaseScraper):
                             "progress",
                             {
                                 "stage": "feed_parsed",
-                                "message": f"{len(listings)} annonces détectées",
+                                "message": f"{len(listings) if listings else 0} annonces détectées",
                             },
                         )
                     else:
                         logger.info("⚠️ Type de données non reconnu")
-
-                    if not listings and attempt < self.max_retries - 1:
-                        logger.info(
-                            f"Aucune annonce trouvée (tentative {attempt+1}), "
-                            f"nouvelle tentative dans {self.retry_delay}s"
+                        listings = []
+                        
+                        
+                        
+                    
+                    if listings and len(listings) > 0:
+                        # ✅ SUCCÈS - On a trouvé des listings
+                        search_duration = time.time() - search_start_time
+                        
+                        logger.info(f"✅ Listings récupérés: {len(listings)}")
+                        self.fb_session_model.mark_session_success(user_id)
+                        logger.info(f"✅ Session success pour user {user_id[:8]}")
+                        
+                        # Enregistrer la métrique de succès
+                        await self.metrics.track_search_execution(
+                            user_id=user_id,
+                            duration_seconds=search_duration,
+                            success=True,
+                            listings_count=len(listings),
+                            error_message=None,
+                            retry_count=total_retry_count
                         )
-                        time.sleep(self.retry_delay)
-                        continue
-                    logger.info(f"Listings récupérés: {len(listings)}")
-                    return listings
+                        
+                        return listings
+                    
+                    else:
+                        # ❌ Pas de listings trouvés
+                        if attempt < self.max_retries - 1:
+                            # On peut encore réessayer
+                            logger.info(
+                                f"Aucune annonce trouvée (tentative {attempt+1}/{self.max_retries}), "
+                                f"nouvelle tentative dans {self.retry_delay}s"
+                            )
+                            time.sleep(self.retry_delay)
+                            continue
+                        else:
+                            # Dernière tentative échouée
+                            logger.warning(
+                                f"⚠️ Aucune annonce trouvée après {self.max_retries} tentatives"
+                            )
+                            # On laisse tomber sur le code après la boucle
+                            break
 
                 except Exception as e:
                     logger.info(f"Erreur lors de la vérification des données: {e}")
@@ -1075,6 +1128,21 @@ class SearchFacebook(BaseTool, BaseScraper):
                     time.sleep(sleep_time)
                     continue
                 else:
+                    self.fb_session_model.mark_session_failure(
+                        user_id,
+                        f"KeyError after {self.max_retries} attempts: {str(e)}"
+                    )
+                    logger.error(f"❌ Session marked as FAILED for user {user_id[:8]}")
+                    search_duration = time.time() - search_start_time
+                    await self.metrics.track_search_execution(
+                            user_id=user_id,
+                            duration_seconds=search_duration,
+                            success=False,
+                            listings_count=0,
+                            error_message=str(e),
+                            retry_count=total_retry_count
+                        )
+    
                     self.event_publisher.publish(
                         job_id,
                         "error",
@@ -1101,6 +1169,20 @@ class SearchFacebook(BaseTool, BaseScraper):
 
                 else:
                     logger.error("Nombre maximum de tentatives atteint")
+                    self.fb_session_model.mark_session_failure(
+                        user_id,
+                        f"Max retries reached: {str(e)}"
+                    )
+                    logger.error(f"❌ Session marked as FAILED for user {user_id[:8]}")
+                    search_duration = time.time() - search_start_time
+                    await self.metrics.track_search_execution(
+                        user_id=user_id,
+                        duration_seconds=search_duration,
+                        success=False,
+                        listings_count=0,
+                        error_message=str(e),
+                        retry_count=total_retry_count
+                     )
                     self.event_publisher.publish(
                         job_id,
                         "error",
@@ -1112,6 +1194,20 @@ class SearchFacebook(BaseTool, BaseScraper):
             if attempt < self.max_retries - 1:
                 logger.debug("Attente 5 secondes avant la prochaine tentative...")
                 time.sleep(5)
-
+                
+        self.fb_session_model.mark_session_failure(
+            user_id,
+            "All retry attempts failed - no listings returned"
+        )
+        logger.error(f"❌ Session marked as FAILED for user {user_id[:8]} - all retries exhausted")
+        search_duration = time.time() - search_start_time
+        await self.metrics.track_search_execution(
+            user_id=user_id,
+            duration_seconds=search_duration,
+            success=False,
+            listings_count=0,
+            error_message="All retry attempts failed - no listings returned",
+            retry_count=self.max_retries
+        )
         # Si on arrive ici, toutes les tentatives ont échoué
         raise RuntimeError("Toutes les tentatives de fb_graphql_call ont échoué")

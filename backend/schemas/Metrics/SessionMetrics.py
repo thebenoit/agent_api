@@ -1,4 +1,4 @@
-from ...database_manager import mongo_manager
+from database_manager import mongo_manager
 
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
@@ -17,17 +17,22 @@ class SessionMetrics(Metrics):
     def __init__(self):
         super().__init__()
         # Récupérer la connexion MongoDB
-        self.db = mongo_manager.get_sync_db()
+        self.db = mongo_manager.get_async_db()
         self.collection = self.db["session_metrics"]
         
-        # Créer des index pour rechercher rapidement
-        self.collection.create_index("user_id")
-        self.collection.create_index("event_type")
-        self.collection.create_index("timestamp")
-        
         logger.debug("SessionMetrics initialisé avec collection: session_metrics")
+
+    async def ensure_indexes(self):
+        """
+        Crée les index nécessaires pour la collection.
+        Doit être appelé au démarrage de l'application.
+        """
+        await self.collection.create_index("user_id")
+        await self.collection.create_index("event_type")
+        await self.collection.create_index("timestamp")
+        logger.info("Index MongoDB créés pour session_metrics")
         
-    async def track_creation_time(
+    async def track_session_creation(
         self, 
         duration_seconds: float, 
         user_id: str,
@@ -44,7 +49,7 @@ class SessionMetrics(Metrics):
             error_message: Message d'erreur si échec
         
         Exemple d'utilisation:
-            metrics.track_session_creation(
+            await metrics.track_session_creation(
                 user_id="66bd41ad...",
                 duration_seconds=15.3,
                 success=True
@@ -64,7 +69,7 @@ class SessionMetrics(Metrics):
          }
         
         try:
-            result = self.collection.insert_one(metric_doc)
+            result = await self.collection.insert_one(metric_doc)
             
             status = "✅ SUCCESS" if success else "❌ FAILURE"
             logger.info(
@@ -76,8 +81,7 @@ class SessionMetrics(Metrics):
             logger.error(f"[METRIC] Erreur lors de l'enregistrement: {e}")
             return None
         
-        
-    def track_search_execution(
+    async def track_search_execution(
         self,
         user_id: str,
         duration_seconds: float,
@@ -98,7 +102,7 @@ class SessionMetrics(Metrics):
             retry_count: Nombre de tentatives avant succès/échec
         
         Exemple d'utilisation:
-            metrics.track_search_execution(
+            await metrics.track_search_execution(
                 user_id="66bd41ad...",
                 duration_seconds=8.5,
                 success=True,
@@ -120,7 +124,7 @@ class SessionMetrics(Metrics):
             }
         }
         try:
-            result = self.collection.insert_one(metric_doc)
+            result = await self.collection.insert_one(metric_doc)
             
             status = "✅ SUCCESS" if success else "❌ FAILURE"
             logger.info(
@@ -133,8 +137,8 @@ class SessionMetrics(Metrics):
         except Exception as e:
             logger.error(f"[METRIC] Erreur lors de l'enregistrement: {e}")
             return None
-    
-    def get_metrics_summary(self, hours: int = 24) -> Dict[str,Any]:
+
+    async def get_metrics_summary(self, hours: int = 24) -> Dict[str,Any]:
         """
         Récupère un résumé des métriques des dernières X heures.
         Utile pour debugging et monitoring.
@@ -146,20 +150,20 @@ class SessionMetrics(Metrics):
             Dict avec statistiques: taux de succès, durées moyennes, etc.
         
         Exemple d'utilisation:
-            summary = metrics.get_metrics_summary(hours=24)
+            summary = await metrics.get_metrics_summary(hours=24)
             print(f"Taux de succès: {summary['session_creation']['success_rate']}")
         """
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         try:
-            recent_metrics = list(self.collection.find({
+            recent_metrics = await self.collection.find({
                 "timestamp": {"$gte":cutoff_time}
-            }))
+            }).to_list(length=None)
             
-            session_creation = [m for m in recent_metrics id m["event_type"] == "session_creation"]
+            session_creation = [m for m in recent_metrics if m["event_type"] == "session_creation"]
             search_executions = [m for m in recent_metrics if m["event_type"] == "search_execution"]
             
-            session_stats = self._calculate_event_stats(session_creations, "session")
+            session_stats = self._calculate_event_stats(session_creation, "session")
             
             search_stats = self._calculate_event_stats(search_executions, "search")
             
@@ -184,7 +188,7 @@ class SessionMetrics(Metrics):
             return{}
             
             
-    def _calulate_event_stats(self, events: list, event_name: str) -> Dict[str,Any]:
+    def _calculate_event_stats(self, events: list, event_name: str) -> Dict[str,Any]:
         """
         Helper pour calculer les stats d'un type d'événement.
         (Méthode privée, utilisée par get_metrics_summary)

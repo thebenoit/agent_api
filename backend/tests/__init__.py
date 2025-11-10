@@ -1,5 +1,5 @@
 # Pour importer depuis tests/sessions/session_test.py
-from .sessions.session_test import test_is_functional
+
 
 
 # Pour importer depuis tests/facebook/test.py

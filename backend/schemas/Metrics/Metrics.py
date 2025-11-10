@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 from datetime import datetime
-from ...database_manager import mongo_manager
+from database_manager import mongo_manager
 import redis
 import logging
 

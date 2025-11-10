@@ -608,7 +608,7 @@ class SessionsManager:
                 self.logger.info(
                     f"[user {user_id[:8]}] ✅ Session créée avec succès en {duration:.2f}s"
                     )
-                self.metrics.track_session_creation(
+                await self.metrics.track_session_creation(
                     user_id=user_id,
                     duration_seconds=duration,
                     success=True,
@@ -621,7 +621,7 @@ class SessionsManager:
                     f"[user {user_id[:8]}] ❌ Échec création session après {duration:.2f}s"
                 )
                 
-                self.metrics.track_session_creation(
+                await self.metrics.track_session_creation(
                     user_id=user_id,
                     duration_seconds=duration,
                     success=False,
@@ -640,7 +640,7 @@ class SessionsManager:
             )
             
             # 🆕 ENREGISTRER LA MÉTRIQUE D'ERREUR
-            self.metrics.track_session_creation(
+            await self.metrics.track_session_creation(
                 user_id=user_id,
                 duration_seconds=duration,
                 success=False,

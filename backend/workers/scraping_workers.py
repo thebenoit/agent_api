@@ -25,6 +25,8 @@ from models.fb_sessions import FacebookSessionModel
 from sessionManager import SessionsManager
 from utils.event_publisher import EventPublisher
 
+from schemas.Metrics.WorkflowMetrics import get_workflow_metrics
+
 load_dotenv()
 
 os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
@@ -64,6 +66,8 @@ class ScrapingWorker:
         self.jobs_failed = 0
         self.start_time = time.time()
         self._event_publisher = EventPublisher()
+        
+        self.workflow_metrics = get_workflow_metrics()
 
         # Gestion des signaux pour arrêt propre
         signal.signal(signal.SIGTERM, self._handle_shutdown)
@@ -100,6 +104,17 @@ class ScrapingWorker:
         start_time = time.time()
         rq_job = get_current_job()
         job_id = rq_job.id if rq_job else f"{user_id[:8]}_{int(time.time())}"
+        
+        queue_wait_time = 0
+        if rq_job and hasattr(rq_job, 'enqueued_at'):
+            queue_wait_time = time.time() - rq_job.enqueued_at.timestamp()
+        
+        # 🆕 1️⃣ TRACKER: Worker a démarré
+        self.workflow_metrics.track_worker_started(
+            job_id=job_id,
+            user_id=user_id,
+            queue_wait_seconds=queue_wait_time 
+        )       
 
         try:
             logger.info(f"Worker démarré pour user {user_id[:8]}\n")
@@ -239,6 +254,9 @@ class ScrapingWorker:
         """
         max_retries = 3
         retry_count = 0
+        
+        session_check_start = time.time()
+        
 
         while retry_count < max_retries:
             try:
@@ -246,6 +264,14 @@ class ScrapingWorker:
                 session = FacebookSessionModel().get_session(user_id)
                 if session is not None:
                     logger.info(f"[{user_id[:8]}] Session existante trouvée")
+                    self.workflow_metrics.track_session_check(
+                        job_id="",  # Pas de job_id ici
+                        user_id=user_id,
+                        session_existed=True,
+                        session_created=False,
+                        duration_seconds=time.time() - session_check_start
+    )
+                    
                     return session
 
                 # 2. Pas de session, il faut la créer
@@ -269,6 +295,13 @@ class ScrapingWorker:
                         session = FacebookSessionModel().get_session(user_id)
                         if session is not None:
                             logger.info(f"[{user_id[:8]}] Session créée avec succès")
+                            self.workflow_metrics.track_session_check(
+                                job_id="",  # Pas de job_id ici
+                                user_id=user_id,
+                                session_existed=False,
+                                session_created=True,
+                                duration_seconds=time.time() - session_check_start
+                            )
                             return session
                         else:
                             raise Exception("Session créée mais non trouvée en base")

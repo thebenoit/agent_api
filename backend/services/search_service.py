@@ -15,6 +15,8 @@ from agents.tools.searchFacebook import SearchFacebook
 from agents.tools.googlePlaces import GooglePlaces
 from dotenv import load_dotenv 
 
+from schemas.Metrics.WorkflowMetrics import get_workflow_metrics
+
 load_dotenv()
 
 
@@ -38,6 +40,8 @@ class SearchService:
         # Rate limiting
         self.rate_limit_window = 60  # 1 minute
         self.max_requests_per_window = 100  # 100 requêtes par minute par IP
+        
+        self.workflow_metrics = get_workflow_metrics()
 
     def _generate_cache_key(self, search_params: Dict[str, Any]) -> str:
         """
@@ -168,6 +172,11 @@ class SearchService:
 
             logger.info(f"Nouveau job créé: {job.id} pour {cache_key}")
 
+            self.workflow_metrics.track_job_enqueued(
+                job_id=job.id,
+                user_id=user_id,
+                search_params=search_params
+            )
             return {
                 "status": "queued",
                 "job_id": job.id,
